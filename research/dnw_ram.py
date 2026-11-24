@@ -55,7 +55,7 @@ class Config(C.Structure):
                  ("interface", C.POINTER(Interface)), ("extra", C.c_void_p),
                  ("extra_length", C.c_int)]
 
-def send(packets, vid, pid, timeout):
+def send(packets, vid, pid, timeout, reconfigure=True):
     lib = C.CDLL(C.util.find_library("usb-1.0") or "libusb-1.0.so.0")
     P, I = C.c_void_p, C.c_int
     def bind(name, restype, *args):
@@ -67,6 +67,8 @@ def send(packets, vid, pid, timeout):
     open_ = bind("open_device_with_vid_pid", P, P, C.c_uint16, C.c_uint16)
     close = bind("close", None, P)
     getdev = bind("get_device", P, P)
+    setcfg = bind("set_configuration", I, P, I)
+    getcurrent = bind("get_configuration", I, P, C.POINTER(I))
     getcfg = bind("get_active_config_descriptor", I, P, C.POINTER(C.POINTER(Config)))
     freecfg = bind("free_config_descriptor", None, C.POINTER(Config))
     claim = bind("claim_interface", I, P, I)
@@ -84,6 +86,12 @@ def send(packets, vid, pid, timeout):
         h = open_(ctx, vid, pid)
         if not h:
             raise RuntimeError(f"{vid:04x}:{pid:04x} not accessible")
+        current = I()
+        check(getcurrent(h, C.byref(current)), "get configuration")
+        print(f"Current configuration: {current.value}", flush=True)
+        if reconfigure:
+            check(setcfg(h, 1), "SET_CONFIGURATION(1)")
+            print("SET_CONFIGURATION(1): OK", flush=True)
         cfg = C.POINTER(Config)()
         check(getcfg(getdev(h), C.byref(cfg)), "get config")
         try:
@@ -134,6 +142,8 @@ def main():
     ap.add_argument("--pid", type=lambda s:int(s,16), default=0x1234)
     ap.add_argument("--timeout", type=int, default=2000)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-reconfigure", action="store_true",
+                    help="skip explicit SET_CONFIGURATION for A/B comparison")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
     if args.selftest:
@@ -159,7 +169,7 @@ def main():
           f"wire {len(data)+10}, {args.checksum} checksum 0x{int.from_bytes(packets[-1], 'little'):04x}")
     print("Header:", packets[0][:8].hex(" "), "Transfer sizes:", [len(p) for p in packets])
     if not args.dry_run:
-        send(packets, args.vid, args.pid, args.timeout)
+        send(packets, args.vid, args.pid, args.timeout, not args.no_reconfigure)
 
 if __name__ == "__main__":
     try:
