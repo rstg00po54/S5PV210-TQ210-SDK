@@ -6,3 +6,8 @@
 /uart_ddr.bin
 /uart_ddr.dis
 /__pycache__/
+
+/uart_rx.o
+/uart_rx.elf
+/uart_rx.bin
+/uart_rx.dis
