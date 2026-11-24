@@ -1,2 +1,8 @@
 /out/
 /dnw_probe
+
+/uart_ddr.o
+/uart_ddr.elf
+/uart_ddr.bin
+/uart_ddr.dis
+/__pycache__/
