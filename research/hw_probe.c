@@ -95,7 +95,9 @@ static void nand_id(void) {
     for(unsigned i=0;i<8;i++) id[i]=B(NAND+0x10);
     R(NAND+4)=7; barrier();
     for(unsigned i=0;i<8;i++) reg(" ID byte",id[i]);
-    if(id[0]==0xec && id[1]==0xd3 && id[2]==0x51 && id[3]==0x95)
+    if(id[0]==0x01 && id[1]==0xd3 && id[2]==0xd1 && id[3]==0x95 && id[4]==0x58)
+        puts0("ID matches Spansion S34ML08G1: 1024 MiB SLC, 2048+64 B/page, 64 pages/block, 8192 blocks\r\n");
+    else if(id[0]==0xec && id[1]==0xd3 && id[2]==0x51 && id[3]==0x95)
         puts0("ID matches Samsung K9K8G08U0B family: 1024 MiB, 2048+64 B/page, 64 pages/block, 8192 blocks\r\n");
     else puts0("Unmatched ID: consult datasheet; no capacity assumed\r\n");
 }
