@@ -142,6 +142,8 @@ def main():
     ap.add_argument("--pid", type=lambda s:int(s,16), default=0x1234)
     ap.add_argument("--timeout", type=int, default=2000)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--join-tail", action="store_true",
+                    help="append checksum to last data transfer (experimental)")
     ap.add_argument("--no-reconfigure", action="store_true",
                     help="skip explicit SET_CONFIGURATION for A/B comparison")
     ap.add_argument("--selftest", action="store_true")
@@ -165,6 +167,8 @@ def main():
     if not 0 < len(data) <= limit:
         ap.error("image size outside experimental RAM limits")
     packets = list(chunks(data, addr, args.checksum))
+    if args.join_tail:
+        packets[-2:] = [packets[-2] + packets[-1]]
     print(f"{args.stage}: {path.name}, address 0x{addr:08x}, payload {len(data)}, "
           f"wire {len(data)+10}, {args.checksum} checksum 0x{int.from_bytes(packets[-1], 'little'):04x}")
     print("Header:", packets[0][:8].hex(" "), "Transfer sizes:", [len(p) for p in packets])
