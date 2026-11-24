@@ -26,3 +26,6 @@ Run:
 Decode special image framing and checksum coverage from the disassembly; consult the supplied iROM application note. Only then implement a boot-stage uploader. Isolate CH340C TX if its voltage exceeds the core board UART rating. Use the original UART test after DDR initialization and verify by sending A and receiving B at 115200 8N1.
 
 Do not flash NAND/SD or send unverified initialization images.
+
+## Update: two-stage RAM boot experiment
+See [USB_PROTOCOL.md](USB_PROTOCOL.md) for exact reverse-engineering evidence and test commands. dnw_ram.py implements the vendor ordinary path and both checksum modes. uart_ddr.S is a 320-byte no-stack ARM UART test; built locally using clang/LLD with entry 0x23e00000. Equivalent GNU ARM build script provided. Packet encoder logic tested locally across 9 lengths and both checksum modes; actual USB transfer and CPU execution still require board testing. This supersedes the earlier probe-only plan.
