@@ -170,7 +170,7 @@ def main():
     if args.join_tail:
         packets[-2:] = [packets[-2] + packets[-1]]
     print(f"{args.stage}: {path.name}, address 0x{addr:08x}, payload {len(data)}, "
-          f"wire {len(data)+10}, {args.checksum} checksum 0x{int.from_bytes(packets[-1], 'little'):04x}")
+          f"wire {len(data)+10}, {args.checksum} checksum 0x{int.from_bytes(packets[-1][-2:], 'little'):04x}")
     print("Header:", packets[0][:8].hex(" "), "Transfer sizes:", [len(p) for p in packets])
     if not args.dry_run:
         send(packets, args.vid, args.pid, args.timeout, not args.no_reconfigure)
