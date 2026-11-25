@@ -61,7 +61,7 @@ static std::string product_name(libusb_device_handle* h,libusb_device_descriptor
     check(n,"product string");
     return std::string(reinterpret_cast<char*>(name),size_t(n));
 }
-static void send_on(Usb& u,Packets& p,bool reconfig,bool strict_rom=false){
+static void send_on(Usb& u,Packets& p,bool reconfig,bool strict_rom=false,bool handoff=false){
     check(libusb_init(&u.c),"libusb_init");u.h=libusb_open_device_with_vid_pid(u.c,0x04e8,0x1234);if(!u.h)throw std::runtime_error("04e8:1234 not accessible; check USB boot/VM attachment/permissions");
     if(strict_rom){
         libusb_device_descriptor dd{};
@@ -70,10 +70,19 @@ static void send_on(Usb& u,Packets& p,bool reconfig,bool strict_rom=false){
     }
     if(reconfig)check(libusb_set_configuration(u.h,1),"SET_CONFIGURATION(1)");
     libusb_config_descriptor* cfg=nullptr;check(libusb_get_active_config_descriptor(libusb_get_device(u.h),&cfg),"get active config");
-    int iface=-1,ep=-1,count=0;for(int i=0;i<cfg->bNumInterfaces;i++)for(int j=0;j<cfg->interface[i].num_altsetting;j++){
+    int iface=-1,ep=-1,count=0;bool handoff_pair=false;for(int i=0;i<cfg->bNumInterfaces;i++)for(int j=0;j<cfg->interface[i].num_altsetting;j++){
         auto& a=cfg->interface[i].altsetting[j];if(a.bAlternateSetting||a.bInterfaceClass!=255)continue;
-        for(int k=0;k<a.bNumEndpoints;k++){auto& e=a.endpoint[k];if((e.bmAttributes&3)==2&&!(e.bEndpointAddress&128)){iface=a.bInterfaceNumber;ep=e.bEndpointAddress;count++;}}
+        bool in1=false,out2=false;
+        for(int k=0;k<a.bNumEndpoints;k++){auto& e=a.endpoint[k];
+            if((e.bmAttributes&3)==2&&!(e.bEndpointAddress&128)){iface=a.bInterfaceNumber;ep=e.bEndpointAddress;count++;}
+            if((e.bmAttributes&3)==2&&e.wMaxPacketSize==512){
+                if(e.bEndpointAddress==0x81)in1=true;
+                if(e.bEndpointAddress==0x02)out2=true;
+            }
+        }
+        if(in1&&out2)handoff_pair=true;
     }libusb_free_config_descriptor(cfg);if(count!=1)throw std::runtime_error("expected exactly one vendor bulk OUT endpoint");
+    if(handoff&&(!handoff_pair||ep!=2))throw std::runtime_error("ROM does not advertise expected HS bulk IN 0x81 / OUT 0x02; no image sent");
     check(libusb_claim_interface(u.h,iface),"claim interface");u.iface=iface;std::printf("interface=%d OUT=0x%02x\n",iface,ep);
     for(size_t i=0;i<p.size();i++){int sent=0;int rc=libusb_bulk_transfer(u.h,uint8_t(ep),p[i].data(),int(p[i].size()),&sent,10000);std::printf("transfer %zu: %d/%zu %s\n",i,sent,p[i].size(),libusb_error_name(rc));std::fflush(stdout);check(rc,"bulk OUT (power-cycle before retry)");if(sent!=int(p[i].size()))throw std::runtime_error("short transfer; power-cycle before retry");}
     std::cout<<"USB transport complete; CPU execution NOT confirmed. Check UART0.\n";
@@ -209,6 +218,14 @@ static void auto_boot(const char* loader,const char* app){
     bulk_send(payload,true,true);
     elapsed("total through USB GO ACK",total_start);
 }
+static void handoff_notice(libusb_device_handle* h,const char* expected,const char* label){
+    Bytes buf(512);int got=0;
+    const int rc=libusb_bulk_transfer(h,0x81,buf.data(),int(buf.size()),&got,5000);
+    check(rc,label);
+    if(got!=16||std::string(reinterpret_cast<const char*>(buf.data()),size_t(got))!=expected)
+        throw std::runtime_error(std::string(label)+": unexpected response; cold reboot");
+    std::cout<<label<<" OK\n"<<std::flush;
+}
 static void handoff_test(const char* loader){
     std::ifstream f(loader,std::ios::binary);
     if(!f)throw std::runtime_error("cannot open handoff SRAM loader");
@@ -218,12 +235,12 @@ static void handoff_test(const char* loader){
     auto p=packets(first,0xd0020010,false,false);
     Usb u;
     const auto start=Clock::now();
-    send_on(u,p,true,true);
+    send_on(u,p,true,true,true);
     elapsed("stage1 ROM upload",start);
-    std::cout<<"Keep the same USB handle open. Wait for HANDOFF EP2 READY on UART.\n"
-             <<"Type READY and press Enter ONLY after that exact message; anything else aborts.\n"<<std::flush;
-    std::string line;
-    if(!std::getline(std::cin,line)||line!="READY")throw std::runtime_error("handoff cancelled; cold reboot");
+    const auto ready_start=Clock::now();
+    std::cout<<"Waiting for USB EP1 readiness marker on the same handle...\n"<<std::flush;
+    handoff_notice(u.h,"OB-HANDOFF-RDY1!","HANDOFF READY");
+    elapsed("same-handle readiness",ready_start);
     const auto transfer_start=Clock::now();
     for(unsigned packet=0;packet<2;packet++){
         Bytes data(packet?37u:512u);
@@ -235,7 +252,9 @@ static void handoff_test(const char* loader){
         std::printf("Same handle packet %u: %d bytes\n",packet+1,sent);
     }
     elapsed("same-handle 549-byte transfer",transfer_start);
-    std::cout<<"Host transport complete; confirm HANDOFF SAME CONNECTION PASS on UART.\n";
+    handoff_notice(u.h,"OB-HANDOFF-OK01!","HANDOFF DDR VERIFY PASS");
+    elapsed("total same-handle handoff",start);
+    std::cout<<"No re-enumeration; both packets verified by device. Cold reboot before next test.\n";
 }
 int main(int argc,char** argv){try{
     if(argc==3&&std::string(argv[1])=="--handoff-test"){handoff_test(argv[2]);return 0;}

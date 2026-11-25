@@ -16,12 +16,17 @@
 #define H_DCTL 0x804u
 #define H_GINTSTS 0x014u
 #define H_GRSTCTL 0x010u
+#define H_DIEPCTL1 0x920u
+#define H_DIEPINT1 0x928u
+#define H_DIEPTSIZ1 0x930u
+#define H_DIEPDMA1 0x934u
 #define H_DOEPCTL2 0xb40u
 #define H_DOEPINT2 0xb48u
 #define H_DOEPTSIZ2 0xb50u
 #define H_DOEPDMA2 0xb54u
 static volatile uint32_t handoff_ep0_guard[128] __attribute__((aligned(32)));
 static volatile uint32_t handoff_packet[128] __attribute__((aligned(32)));
+static volatile uint8_t handoff_in[32] __attribute__((aligned(32)));
 static uint32_t handoff_address;
 static void handoff_abort(const char *reason){
     out("HANDOFF ABORT: ");out(reason);out("\r\n");
@@ -36,13 +41,16 @@ static void handoff_guard(void){
        HR(0x040)!=0x4f54281au||(HR(H_GINTSTS)&1u)){
         out("HANDOFF BLOCKED: no expected device core\r\n");stop();
     }
-    uint32_t ep=HR(H_DOEPCTL2);
+    uint32_t ep=HR(H_DOEPCTL2),in=HR(H_DIEPCTL1);
+    reg("HANDOFF ROM EP1 IN=",in);
+    reg("HANDOFF ROM EP2 OUT=",ep);
     handoff_address=HR(0x800)&(127u<<4);
     if(!handoff_address||(HR(H_DCTL)&HB(1))||
        ((HR(0x808)>>1)&3u)!=0u||!(HR(0x008)&HB(5))||
        (ep&(HB(31)|HB(21)))||!(ep&HB(15))||
        ((ep>>18)&3u)!=2u||(ep&0x7ffu)!=512u||
-       (HR(0x900)&H_EPENA)||(HR(0x920)&H_EPENA)||
+       (HR(0x900)&H_EPENA)||(in&(H_EPENA|HB(21)))||
+       !(in&HB(15))||((in>>18)&3u)!=2u||(in&0x7ffu)!=512u||
        (HR(H_GINTSTS)&H_RESET))
         handoff_abort("unexpected ROM endpoint/address state");
     /* NAK all OUT transfers and mask interrupts before replacing DMA
@@ -73,7 +81,7 @@ static void handoff_guard(void){
 static void handoff_check(void){
     if((HR(H_GINTSTS)&H_RESET)||(HR(0x800)&(127u<<4))!=handoff_address||
        (HR(0xb08)&(H_SETUP|H_DMAERR))||(HR(0x908)&H_DMAERR)||
-       (HR(H_DOEPINT2)&H_DMAERR))
+       (HR(H_DOEPINT2)&H_DMAERR)||(HR(H_DIEPINT1)&H_DMAERR))
         handoff_abort("reset / unexpected EP0 traffic / DMA error");
 }
 static void handoff_arm(void){
@@ -86,11 +94,33 @@ static void handoff_arm(void){
     HW(H_DOEPTSIZ2,(1u<<19)|512u);
     HW(H_DOEPCTL2,HB(15)|(2u<<18)|512u|H_CNAK|H_EPENA);
 }
+static void handoff_notice(const char *message){
+    handoff_check();
+    uint32_t ctl=HR(H_DIEPCTL1);
+    if(ctl&H_EPENA)handoff_abort("EP1 still enabled");
+    if((ctl&0x7ffu)!=512u||!(ctl&HB(15))||((ctl>>18)&3u)!=2u)
+        handoff_abort("EP1 configuration changed");
+    for(unsigned i=0;i<16u;i++)handoff_in[i]=(uint8_t)message[i];
+    __asm__ volatile("dsb sy":::"memory");
+    HW(H_DIEPINT1,0xffffffffu);
+    HW(H_DIEPDMA1,(uint32_t)(uintptr_t)handoff_in);
+    HW(H_DIEPTSIZ1,(1u<<19)|16u);
+    /* Preserve the inherited TX FIFO selection and endpoint toggle.
+       Do not issue SD0PID/SD1PID or core reset. */
+    HW(H_DIEPCTL1,(ctl&((15u<<22)|HB(15)|(3u<<18)|0x7ffu))|H_CNAK|H_EPENA);
+    if(HR(H_DCTL)&HB(2))HW(H_DCTL,HR(H_DCTL)|HB(8));
+    reg("HANDOFF EP1 ARMED=",HR(H_DIEPCTL1));
+    while(!(HR(H_DIEPINT1)&H_XFRC))handoff_check();
+    handoff_check();
+    HW(H_DIEPINT1,H_XFRC);
+    out("HANDOFF EP1 NOTICE SENT\r\n");
+}
 static void handoff_test(void){
     handoff_check();
     handoff_arm();
     HW(H_DCTL,HR(H_DCTL)|HB(10));
-    out("HANDOFF EP2 READY; send test packets on original host handle\r\n");
+    out("HANDOFF EP2 READY; sending USB readiness marker\r\n");
+    handoff_notice("OB-HANDOFF-RDY1!");
     for(unsigned packet=0;packet<2;packet++){
         while(!(HR(H_DOEPINT2)&H_XFRC))handoff_check();
         handoff_check();
@@ -116,6 +146,7 @@ static void handoff_test(void){
     }
     HW(H_DOEPINT2,0xffffffffu);
     out("HANDOFF SAME CONNECTION PASS: 549 bytes, DMA + DDR readback\r\n");
+    handoff_notice("OB-HANDOFF-OK01!");
     out("No execution; cold power-cycle before next download\r\n");
     for(;;)handoff_check();
 }
