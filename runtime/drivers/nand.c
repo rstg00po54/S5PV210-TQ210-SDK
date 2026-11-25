@@ -426,6 +426,33 @@ int nand_command(const char *args)
     }
     if (equal(args, "regs")) { regs(); return 0; }
     if (equal(args, "init")) return init();
+    if (equal(args, "testall")) {
+        static const char *const steps[] = {
+            "autotest", "onfi", "info", "boundary", "bench", "scan all", "ecc 0"
+        };
+        unsigned passed = 0, failed = 0, skipped = 0;
+        int full = 0;
+        console_write("\r\n=== NAND TEST ALL (READ ONLY) ===\r\n");
+        for (unsigned i = 0; i < sizeof(steps)/sizeof(steps[0]); ++i) {
+            console_write("\r\n[NAND] "); console_write(steps[i]); console_write("\r\n");
+            if (i > 0u && (!initialized || !geometry)) {
+                ++skipped; console_write("[NAND] SKIP: initialization failed\r\n"); continue;
+            }
+            if ((i == 3u || i == 5u) && !full) {
+                ++skipped; console_write("[NAND] SKIP: full geometry not verified\r\n"); continue;
+            }
+            int rc = nand_command(steps[i]);
+            if (i == 1u) full = (rc == 0 && page_limit == LIMIT_PAGES);
+            if (rc) { ++failed; console_write("[NAND] FAIL/INCONCLUSIVE\r\n"); }
+            else { ++passed; console_write("[NAND] COMPLETE\r\n"); }
+        }
+        console_reg("Completed=", passed);
+        console_reg("Failed/inconclusive=", failed);
+        console_reg("Skipped=", skipped);
+        console_write("ECC completion is diagnostic only; no correction or data integrity guarantee.\r\n");
+        console_write("=== NAND TEST ALL END ===\r\n");
+        return (failed || skipped) ? -1 : 0;
+    }
     if (equal(args, "autotest")) {
         int rc = autotest();
         if (rc) console_write("NAND AUTOTEST FAIL\r\n");
