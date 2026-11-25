@@ -1,5 +1,7 @@
 /* OpenBoot DWC OTG 2.81a enumeration experiment. Included by main.c.
- * Private-test VID/PID 1209:0001, not unique, not for distribution.
+ * Private-test VID/PID 1209:0001 by default; USB_DNW_ID uses the existing
+ * board driver hardware ID 04e8:1234 for local development only.
+ * Neither variant is intended for distribution under these IDs.
  * EP0 only, PIO/polling, no USB DMA or writes to downloaded DDR images.
  * Preserve the board's known working PHY configuration. */
 #define UREG(off) R(0xec000000u+(off))
@@ -44,7 +46,11 @@ static unsigned usb_setup_valid,usb_config,usb_phase;
 enum { USB_IDLE,USB_IN_DATA,USB_OUT_STATUS,USB_IN_STATUS };
 /* No endpoint other than EP0 advertised at this milestone. */
 static const uint8_t usb_device_desc[]={
+#ifdef USB_DNW_ID
+    18,1,0,2,0,0,0,64,0xe8,0x04,0x34,0x12,0x01,0x00,1,2,0,1
+#else
     18,1,0,2,0,0,0,64,0x09,0x12,0x01,0x00,0x01,0x00,1,2,0,1
+#endif
 };
 static const uint8_t usb_config_desc[]={
     9,2,18,0,1,1,0,0x80,50,
@@ -207,7 +213,11 @@ static int usb_start(void) {
     usb_phase=USB_IDLE;usb_config=0;usb_setup_valid=0;
     UW(DIEPCTL0,ACTIVE|SNAK);usb_arm_setup();
     UW(GINTMSK,USB_RESET|USB_ENUM|RX_LEVEL|UBIT(18)|UBIT(19));
+#ifdef USB_DNW_ID
+    out("USB RECONNECT: local DNW driver ID 04e8:1234; EP0 only\r\n");
+#else
     out("USB RECONNECT: private test VID:PID 1209:0001\r\n");
+#endif
     UW(DCTL,CLEAR_NAKS);
     reg("GAHBCFG=",UREG(GAHBCFG));reg("GUSBCFG=",UREG(GUSBCFG));
     return 1;

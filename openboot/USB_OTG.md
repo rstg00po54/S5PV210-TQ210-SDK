@@ -32,3 +32,17 @@ New rom_usb_enum.bin retains validated DDR settings. It starts with the normal U
     sudo ./build-host/tq210-dnw out/rom_usb_enum.bin --pad-vendor-size
 
 In Ubuntu another terminal can run sudo dmesg -w. After DDR EXEC PASS, send e via UART. Expect USB SOFT DISCONNECT, USB RECONNECT, USB BUS RESET, USB ENUM SPEED FIELD, SETUP logs, SET ADDRESS, SET CONFIGURATION=1, OPENBOOT USB CONFIGURED. Check lsusb and sudo lsusb -v -d 1209:0001. In VMware the new VID/PID may attach to the host instead of the guest; manually reconnect the new device to Ubuntu if necessary. If only Samsung remains or the new device does not enumerate, capture all UART and kernel messages. If e hangs or q disconnects, cold power-cycle to restore the ROM. No NAND/SD access. Do not send another DNW image to the enumeration-only device.
+
+
+## Windows enumeration result and existing DNW driver ID (2026-11-25)
+
+The user observed the custom 1209:0001 device in a Windows USB inspection utility: OpenBoot / TQ210 OTG 1, USB 2.0 High-Speed, device/configuration/interface/qualifier/other-speed descriptors parsed correctly. Windows reported problem code 28 and configuration 0, and VMware did not offer the device. No SET_CONFIGURATION was seen. Unsupported Microsoft OS string 0xEE and BOS requests were stalled; this did not prevent descriptor enumeration.
+
+The SDK's Windows平台工具/TQBoardUSB下载驱动/TQBoardUSB下载驱动/EmbedSky_TQ_Board.inf specifies DeviceID = "VID_04E8&PID_1234" and libusb-win32, default configuration 1. For private development on this board, rom_usb_dnw_enum.bin now advertises that VID/PID to reuse the already installed driver and VMware matching. Manufacturer/product strings remain OpenBoot / TQ210 OTG 1, and the interface intentionally advertises zero bulk endpoints. This is ID-level compatibility, NOT a byte-for-byte clone or DNW protocol compatibility. The original BL2 blob b271436e5e693a1de43b872a4c8b1d3d2937a83d contains other-speed configuration data (full speed IN 0x83 / OUT 0x04, MPS 64; high speed IN 0x81 / OUT 0x02, MPS 512), which will be used as a reference when implementing the actual endpoints. Do not advertise unimplemented endpoints. Same VID/PID as iROM is ambiguous; never use automatic same-ID detection as proof of stage2 readiness.
+
+    git pull
+    sh boot/build.sh
+    # cold reboot into iROM USB mode, open UART0
+    sudo ./build-host/tq210-dnw out/rom_usb_dnw_enum.bin --pad-vendor-size
+
+After DDR EXEC PASS, send lowercase e. Confirm UART announces "USB RECONNECT: local DNW driver ID 04e8:1234; EP0 only". Check Windows Device Manager / USB inspector and VMware Removable Devices. Attach to Ubuntu if necessary. Expect SET CONFIGURATION=1 and OPENBOOT USB CONFIGURED if the host selects the configuration. In Ubuntu use lsusb -d 04e8:1234 and sudo lsusb -v -d 04e8:1234; confirm product is TQ210 OTG 1, not the ROM product. The prior rom_usb_enum.bin remains available unchanged. Do not start the DNW tool again, since bulk is not implemented. No firmware binary or original driver modified. Reuse of installed driver is expected, not guaranteed (driver policy/cache/VMware may affect binding). Source-reviewed, not cross-compiled or hardware-tested yet.
