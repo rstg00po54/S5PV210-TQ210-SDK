@@ -276,9 +276,11 @@ static void usb_request(void) {
     unsigned value=(unsigned)usb_setup[2]|((unsigned)usb_setup[3]<<8);
     unsigned index=(unsigned)usb_setup[4]|((unsigned)usb_setup[5]<<8);
     unsigned len=(unsigned)usb_setup[6]|((unsigned)usb_setup[7]<<8);
+    #ifndef USB_FAST_BOOT
     reg("SETUP TYPE/REQ=",(type<<8)|req);
     reg("SETUP VALUE=",value);
     reg("SETUP LENGTH=",len);
+    #endif
     const uint8_t *p=0;unsigned n=0;
     uint8_t small[2]={0,0};
 #ifdef USB_AUTO_BOOT
@@ -389,10 +391,10 @@ static void usb_rx(void) {
 }
 /* Keep the delay counter in a CPU register, not uncached SRAM.
  * Approximate settling delay at the verified 400 MHz ARM clock. */
-static void usb_settle(void) {
-    uint32_t n=40000000u;
+static void usb_delay_iterations(uint32_t n) {
     __asm__ volatile("1: subs %0,%0,#1\n bne 1b":"+r"(n)::"cc","memory");
 }
+static void usb_settle(void) {usb_delay_iterations(40000000u);}
 static int usb_start(void) {
     if(!(R(0xe010e80cu)&1u)||!(R(0xe0100464u)&UBIT(16))||
        UREG(0x040u)!=0x4f54281au||(UREG(GINTSTS)&1u)) {
@@ -492,7 +494,11 @@ static void usb_enum_test(void) {
                     usb_exec_pending=0;
                     /* Status IN completed. Let the host finish the control
                        transfer before disconnecting. Reset aborts launch. */
+#ifdef USB_FAST_BOOT
+                    usb_delay_iterations(4000000u);
+#else
                     usb_settle();
+#endif
                     if(!(UREG(GINTSTS)&USB_RESET))bulk_execute();
                 }
 #endif

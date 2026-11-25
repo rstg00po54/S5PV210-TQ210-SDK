@@ -105,3 +105,20 @@ rom_usb_auto.bin adds auto takeover after DDR checks, revision 4 / TQ210 Auto Bo
     sudo ./build-host/tq210-dnw --boot out/rom_usb_auto.bin out/ddr_app.bin
 
 Expected final UART: DDR APP EXEC PASS: independent ARM image at 0x24000000. If auto firmware exceeds 11168 bytes, host refuses rather than sending an unverified ROM frame. If timeout/error occurs capture host and UART logs; cold reset before retry.
+
+
+## Automatic boot host path validated; timing experiment
+The user's 0a2416b run completed both stages and USB GO ACK. No wall-clock timestamps or automatic-run UART success line were provided; actual program execution for this specific automatic run is not independently confirmed here (manual x execution was confirmed earlier).
+
+The new host reports elapsed milliseconds for ROM upload, stage2 readiness including re-enumeration, DDR upload including host CRC, verification status, GO ACK, and total. Auto discovery checks device revision before requesting strings, polls every 50ms instead of 200ms, and uses a 1s readiness control request timeout (post-upload verification retains 30s). The 60s discovery deadline is not an intentional fixed wait. A slow synchronous libusb call may extend the deadline slightly.
+
+New optional rom_usb_fast.bin keeps both original 40-million-iteration disconnect/device-mode settle delays, ROM framing, DDR checks, second CRC and USB identity. It reduces the separate pre-takeover and post-GO delays to 4 million iterations and suppresses the three verbose lines per EP0 SETUP request. Actual savings depend on CPU and host timing. The original rom_usb_auto.bin remains available with the original delays and logs. Neither variant changes the 400 MHz CPU clock or PIO bulk engine. These are experimental changes, not measured speedups; build and compare cold boots on the same VM.
+
+    git pull
+    sh boot/build.sh
+    cmake --build build-host
+    # each command on a separate cold boot
+    sudo ./build-host/tq210-dnw --boot out/rom_usb_auto.bin out/ddr_app.bin
+    sudo ./build-host/tq210-dnw --boot out/rom_usb_fast.bin out/ddr_app.bin
+
+Record all [TIME] lines and the final UART DDR APP EXEC PASS. Total measures host GO ACK, not final payload execution. If fast mode regresses, use baseline. No target cross-build or hardware validation performed for this commit. Further optimization should follow the measurements; VMware/Windows enumeration latency may dominate.

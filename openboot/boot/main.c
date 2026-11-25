@@ -347,7 +347,11 @@ void boot_main(void) {
 #endif
 #ifdef USB_AUTO_BOOT
     out("OpenBoot Auto Boot: starting USB takeover automatically.\r\n");
+#ifdef USB_FAST_BOOT
+    usb_delay_iterations(4000000u);
+#else
     usb_settle();
+#endif
     usb_enum_test();
 #endif
 #ifdef USB_ENUM_TEST
