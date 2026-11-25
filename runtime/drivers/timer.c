@@ -24,11 +24,36 @@
 #define VECTOR_SLOT 0x100u
 #define VECTOR_PRIORITY 0x200u
 #define VECTOR_ADDR 0xf00u
-#define RELOAD 6667u
+#define PWM_ENABLE_MASK 31u
+#define T0_CONTROL_MASK 31u
 
 static volatile uint32_t ticks;
 static volatile unsigned active;
 static unsigned probed;
+
+/* Rounded integer division without an ARM EABI division helper. */
+static uint32_t divide_round(uint32_t n, uint32_t d)
+{
+    uint32_t q = 0, rem = 0;
+    n += d >> 1;
+    for (unsigned i = 32; i != 0; --i) {
+        rem = (rem << 1) | ((n >> (i - 1u)) & 1u);
+        if (rem >= d) {
+            rem -= d;
+            q |= 1u << (i - 1u);
+        }
+    }
+    return q;
+}
+
+/* Preserve other channels' enable bits; never echo their W1C pending bits. */
+static void timer0_ack(int enabled)
+{
+    uint32_t enables = PWM(TINT_CSTAT) & PWM_ENABLE_MASK;
+    PWM(TINT_CSTAT) = (enables & ~T0_ENABLE) |
+                      (enabled ? T0_ENABLE : 0u) | T0_PENDING;
+    dsb();
+}
 
 static void irq_mask(void)
 {
@@ -71,28 +96,39 @@ static int prepare(void)
         console_write("PWM clock gate FAIL\r\n");
         return -1;
     }
-    if (PWM(TCON) & ((1u << 8)|(1u << 12)|(1u << 16)|(1u << 20))) {
-        console_write("Other PWM timers running; refusing shared prescaler change.\r\n");
+    uint32_t tcon = PWM(TCON);
+    uint32_t tcfg0 = PWM(TCFG0);
+    uint32_t tcfg1 = PWM(TCFG1);
+    console_reg("TCON inherited=", tcon);
+    console_reg("TCFG0 inherited=", tcfg0);
+    console_reg("TCFG1 inherited=", tcfg1);
+    console_reg("TINT_CSTAT inherited=", PWM(TINT_CSTAT));
+    if (tcon & 1u) {
+        console_write("Timer0 already running; refusing takeover.\r\n");
         return -1;
     }
-    PWM(TCON) &= ~15u;
-    /* Low five bits are enables; bits 5..9 are W1C pending. */
-    PWM(TINT_CSTAT) = T0_PENDING;
-    /* PCLK_PSYS nominal 66.667 MHz /100 /1 /6667 = ~100 Hz. */
-    PWM(TCFG0) = (PWM(TCFG0) & ~255u) | 99u;
-    PWM(TCFG1) &= ~15u;
-    PWM(TCNTB0) = RELOAD;
+    /* Never touch shared prescalers, even if their other channels are idle.
+       Timer0 uses prescaler0 and its own mux (/1 on S5PV210).
+       The nominal PCLK_PSYS/100 Hz numerator is 666667. */
+    uint32_t prescaler = (tcfg0 & 255u) + 1u;
+    uint32_t reload = divide_round(666667u, prescaler);
+    console_reg("TIMER0 prescaler=", prescaler);
+    console_reg("TIMER0 reload=", reload);
+    PWM(TCON) &= ~T0_CONTROL_MASK;
+    timer0_ack(0);
+    PWM(TCFG1) = tcfg1 & ~15u;
+    PWM(TCNTB0) = reload;
     PWM(TCMPB0) = 0;
-    PWM(TCON) = (PWM(TCON) & ~15u) | 2u;
-    PWM(TCON) &= ~15u;
+    PWM(TCON) = (PWM(TCON) & ~T0_CONTROL_MASK) | 2u;
+    PWM(TCON) &= ~T0_CONTROL_MASK;
     dsb();
     return 0;
 }
 
 static void stop_hw(void)
 {
-    PWM(TCON) &= ~15u;
-    PWM(TINT_CSTAT) = T0_PENDING;
+    PWM(TCON) &= ~T0_CONTROL_MASK;
+    timer0_ack(0);
     dsb();
 }
 
@@ -105,6 +141,9 @@ int timer_probe(void)
     console_reg("TCFG0=", PWM(TCFG0));
     console_reg("TCFG1=", PWM(TCFG1));
     console_reg("TCNTB0=", PWM(TCNTB0));
+    /* CPU IRQ is masked by prepare(); enable the peripheral's pending source
+       for this polling test, without enabling a VIC line or CPU IRQ. */
+    timer0_ack(1);
     PWM(TCON) |= 9u;
     dsb();
     uint32_t first = PWM(TCNTO0);
@@ -121,8 +160,12 @@ int timer_probe(void)
             console_write("TIMER POLL FAIL\r\n");
             return -1;
         }
-        PWM(TINT_CSTAT) = T0_PENDING;
-        dsb();
+        timer0_ack(1);
+        if (PWM(TINT_CSTAT) & T0_PENDING) {
+            stop_hw();
+            console_write("TIMER POLL FAIL: pending did not clear\r\n");
+            return -1;
+        }
     }
     stop_hw();
     probed = 1;
@@ -144,7 +187,7 @@ void timer_start(void)
     VIC(0, PRIORITY_MASK) = 0xffffu;
     VIC(0, VECTOR_SLOT + 21u*4u) = 21u;
     VIC(0, VECTOR_PRIORITY + 21u*4u) = 0u;
-    PWM(TINT_CSTAT) = T0_ENABLE | T0_PENDING;
+    timer0_ack(1);
     VIC(0, INT_ENABLE) = T0_IRQ;
     dsb();
     if (!(VIC(0, INT_ENABLE) & T0_IRQ)) {
@@ -198,8 +241,7 @@ void irq_dispatch(void)
         (PWM(TINT_CSTAT) & T0_PENDING)) {
         /* Read current vector to acknowledge, clear peripheral, then EOI. */
         (void)VIC(0, VECTOR_ADDR);
-        PWM(TINT_CSTAT) = T0_ENABLE | T0_PENDING;
-        dsb();
+        timer0_ack(1);
         ++ticks;
         VIC(0, VECTOR_ADDR) = 0u;
         dsb();
