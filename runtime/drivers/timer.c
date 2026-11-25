@@ -34,6 +34,8 @@
 static volatile uint32_t ticks;
 static volatile unsigned active;
 static unsigned probed;
+static volatile unsigned irq_test_limit;
+static volatile unsigned irq_test_error;
 
 /* Rounded integer division without an ARM EABI division helper. */
 static uint32_t divide_round(uint32_t n, uint32_t d)
@@ -177,14 +179,14 @@ int timer_probe(void)
     return 0;
 }
 
-void timer_start(void)
+int timer_start(void)
 {
     if (!probed) {
         console_write("Run timer probe successfully first.\r\n");
-        return;
+        return -1;
     }
     if (prepare()) {
-        return;
+        return -1;
     }
     vic_disable_all();
     ticks = 0;
@@ -195,16 +197,20 @@ void timer_start(void)
     VIC(0, INT_ENABLE) = T1_IRQ;
     dsb();
     if (!(VIC(0, INT_ENABLE) & T1_IRQ)) {
+        VIC(0, INT_CLEAR) = T1_IRQ;
         stop_hw();
         console_write("VIC enable FAIL\r\n");
-        return;
+        return -1;
     }
     active = 1;
     PWM(TCON) |= T1_START | T1_RELOAD;
     dsb();
-    console_write("Timer1 IRQ enabled; use ticks to check progress.\r\n");
+    console_reg("VIC0 enable=", VIC(0, INT_ENABLE));
+    console_reg("VIC0 IRQ status=", VIC(0, IRQ_STATUS));
+    console_write("Timer1 IRQ enabled; entering CPU IRQ test/run.\r\n");
     __asm__ volatile("cpsie i" ::: "memory");
     isb();
+    return 0;
 }
 
 void timer_stop(void)
@@ -237,6 +243,49 @@ void timer_info(void)
     console_write("\r\n");
 }
 
+int timer_irq_selftest(void)
+{
+    if (active) {
+        console_write("Stop timer before IRQ self-test.\r\n");
+        return -1;
+    }
+    if (!probed && timer_probe()) {
+        return -1;
+    }
+
+    irq_test_error = 0;
+    irq_test_limit = 10u;
+    console_write("IRQ TEST: wait for 10 Timer1 interrupts and returns\r\n");
+    if (timer_start()) {
+        irq_test_limit = 0;
+        return -1;
+    }
+
+    /* Bounded foreground polling; not a calibrated wall-clock timeout.
+       A hard exception or a CPU stuck inside IRQ still needs cold reset. */
+    unsigned budget = 100000000u;
+    while (ticks < 10u && !irq_test_error && --budget) {
+        __asm__ volatile("nop");
+    }
+    timer_stop();
+    irq_test_limit = 0;
+    uint32_t snapshot = ticks;
+    uint32_t cpsr;
+    __asm__ volatile("mrs %0,cpsr" : "=r"(cpsr));
+    console_reg("IRQ TEST CPSR=", cpsr);
+    console_reg("IRQ TEST VIC0 enable=", VIC(0, INT_ENABLE));
+    console_reg("IRQ TEST TCON=", PWM(TCON));
+    console_reg("IRQ TEST TINT_CSTAT=", PWM(TINT_CSTAT));
+    if (snapshot != 10u || irq_test_error ||
+        !(cpsr & (1u << 7)) || (VIC(0, INT_ENABLE) & T1_IRQ) ||
+        (PWM(TCON) & T1_START) || (PWM(TINT_CSTAT) & (T1_ENABLE | T1_PENDING))) {
+        console_write("IRQ TEST FAIL: count, ack, timeout or stop check\r\n");
+        return -1;
+    }
+    console_write("IRQ TEST PASS: 10 IRQs, returned to foreground, source stopped\r\n");
+    return 0;
+}
+
 void irq_dispatch(void)
 {
     uint32_t status = VIC(0, IRQ_STATUS);
@@ -247,6 +296,17 @@ void irq_dispatch(void)
         (void)VIC(0, VECTOR_ADDR);
         timer1_ack(1);
         ++ticks;
+        /* A bounded self-test masks its source before returning from
+           the final IRQ; the foreground then completes normal stop. */
+        if (irq_test_limit) {
+            if (PWM(TINT_CSTAT) & T1_PENDING) {
+                irq_test_error = 1;
+            }
+            if (irq_test_error || ticks >= irq_test_limit) {
+                VIC(0, INT_CLEAR) = T1_IRQ;
+                stop_hw();
+            }
+        }
         VIC(0, VECTOR_ADDR) = 0u;
         dsb();
         return;

@@ -113,5 +113,14 @@ void runtime_autotest(void)
         return;
     }
 
+    if (run_stage("Timer1 VIC IRQ / exception return", timer_irq_selftest)) {
+        report(0);
+        return;
+    }
+    if (run_stage("Post-IRQ DDR memory self-test", memory_selftest)) {
+        report(0);
+        return;
+    }
+
     report(failed == 0u);
 }

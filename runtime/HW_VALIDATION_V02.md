@@ -41,3 +41,23 @@
     Passed: 6  Skipped: 0  Failed: 1
 
 TCON 的 Timer0 start/reload、Timer2 reload（未启动）、Timer4 start 置位；Timer1 start 位未置位。TCFG0 表示 Timer0/1 预分频为 1，Timer2/3/4 为 66。TINT_CSTAT 表示 Timer4 IRQ enable、Timer0/4 pending；不确定继承状态的初始化者。依据原厂 regs-timer.h 及 int.h，改用 Timer1，独立 TCNTB1=0x18、TCMPB1=0x1c、TCNTO1=0x20；TCON 位8–11，TCFG1 位4–7，TINT_CSTAT enable bit1/pending bit6，VIC0 input22。保留共享分频及其他通道的控制和 pending。名义 100 Hz 重载 666667（0x000A2C2B，实际频率未校准）。仅选择 Timer1，不擅自停止 Timer0；轮询后停止 Timer1，手动 IRQ 实验仍独占 VIC，不保证继承 IRQ 配置不变。尚未实机验证 Timer1。
+
+## 第三轮：Timer1 轮询实机通过（2026-11-25）
+
+用户使用 80c5578 的安全版执行 autotest，三组 PMU 测试再次零错误，MMU、D-Cache、页分配器通过。Timer1 继承状态与前次一致：
+
+    TCON inherited=0x00108009
+    TCFG0 inherited=0x00004100
+    TCFG1 inherited=0x00000000
+    TINT_CSTAT inherited=0x00000230
+    TIMER1 prescaler=0x00000001
+    TIMER1 reload=0x000A2C2B
+    TCFG0=0x00004100
+    TCFG1=0x00000000
+    TCNTB1=0x000A2C2B
+    TCNTO1 initial=0x000A2C04
+    TIMER POLL PASS: Timer1, 3 pending events
+    RESULT: PASS
+    Passed: 7  Skipped: 0  Failed: 0
+
+证明 Timer1 计数、自动重载及连续 pending 清除可用；CPU IRQ 尚未打开，不能据此认定 VIC 或异常返回已验证。下一版在 autotest 增加独立 IRQ 阶段与 IRQ 后内存测试。目标为 10 次 IRQ 后自动停止；该新代码尚待实机。

@@ -38,6 +38,7 @@ static void help(void)
                   "timer on   Start Timer1 IRQ after probe\r\n"
                   "timer off  Stop Timer1 IRQ\r\n"
                   "ticks      Show timer tick count\r\n"
+                  "irqtest    Run bounded Timer1 IRQ self-test\r\n"
                   "autotest   Run automatic MMU/cache/DDR/timer tests\r\n"
                   "halt       Stop; cold power-cycle to restart\r\n");
 }
@@ -93,6 +94,8 @@ static void execute(char *line)
         benchmark_run();
     } else if (equal(line, "timer probe")) {
         timer_probe();
+    } else if (equal(line, "irqtest")) {
+        timer_irq_selftest();
     } else if (equal(line, "timer on")) {
         timer_start();
     } else if (equal(line, "timer off")) {
