@@ -13,3 +13,7 @@ for mode in gpio uart; do
   "$objcopy" -O binary -j .text ../out/entry_$mode.elf ../out/entry_$mode.bin
   wc -c ../out/entry_$mode.bin
 done
+
+"$cc" $target $linker -mcpu=cortex-a8 -marm -nostdlib -Wl,-Ttext=0xd0020010,-e,_start,--build-id=none rom_state.S -o ../out/rom_state.elf
+"$objcopy" -O binary -j .text ../out/rom_state.elf ../out/rom_state.bin
+wc -c ../out/rom_state.bin
