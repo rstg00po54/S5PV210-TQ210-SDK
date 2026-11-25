@@ -168,11 +168,15 @@ static void alias_probe(uint32_t base) {
    Save all originals before any writes; restore after both verification passes. */
 #define NS_PER_BANK 86u
 #define NS_ALL (2u*NS_PER_BANK)
+/* i is always in [0, NS_ALL). Avoid software division in freestanding ARM. */
+static unsigned sample_index(unsigned i) {
+    return i>=NS_PER_BANK ? i-NS_PER_BANK : i;
+}
 static uint32_t sample_addr(unsigned i) {
     uint32_t base=i>=NS_PER_BANK?0x40000000u:0x20000000u;
-    unsigned j=i%NS_PER_BANK;
+    unsigned j=sample_index(i);
     if(j<64u) {
-        uint32_t block=(j/2u)<<24;
+        uint32_t block=(j>>1)<<24;
         return base+block+((j&1u)?0x00fffffcu:0x10000u);
     }
     /* Walking bits 2..23 from base; avoids duplicate +64 KiB sample. */
@@ -187,7 +191,8 @@ static void map_probe(void) {
     reg("DMC1 MEMCONFIG0=",R(0xf1400008u));
     for(unsigned i=0;i<NS_ALL;i++) {
         uint32_t a=sample_addr(i);
-        if(i%NS_PER_BANK<64u && !((i%NS_PER_BANK)&1u)) reg("PROBE BLOCK=",a);
+        unsigned j=sample_index(i);
+        if(j<64u && !(j&1u)) reg("PROBE BLOCK=",a);
         saved[i]=R(a);
     }
     for(unsigned pass=0;pass<2;pass++) {
