@@ -52,6 +52,8 @@ static void help(void)
                   "nand read PAGE / nand oob PAGE / nand scan [N]\r\n"
                   "nand autotest  Non-destructive NAND test\r\n"
                   "nand testall   Run all seven NAND diagnostics\r\n"
+                  "nand phase3    Read-only regression, BBT, scratch candidates\r\n"
+                  "nand bbt / candidates / scratch BLOCK / rwtest BLOCK\r\n"
                   "nand onfi / boundary / bench / scan all / ecc PAGE\r\n"
                   "halt       Stop; cold power-cycle to restart\r\n");
 }

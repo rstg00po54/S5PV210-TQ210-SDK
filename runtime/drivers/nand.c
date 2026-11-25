@@ -30,9 +30,15 @@
 #define ECCSECSTAT ECCREG(0x40u)
 #define DECODE_DONE (1u << 24)
 #define ECC_BUSY (1u << 31)
+#define ENCODE_DONE (1u << 25)
+#define BLOCKS (LIMIT_PAGES / PPB)
+#define NO_BLOCK 0xffffffffu
 static uint8_t id[5], buf[PAGE + OOB], copy[PAGE + OOB];
 static unsigned initialized, geometry, page_limit;
 static uint8_t param[768];
+static uint8_t bbt[BLOCKS / 8u], expected[PAGE + OOB], injected[PAGE + OOB];
+static unsigned bbt_valid, armed = NO_BLOCK;
+static int phase3(void);
 static int onfi(void);
 
 static void delay_bus(void)
@@ -105,6 +111,7 @@ static int init(void)
 {
     uint8_t other[5];
     initialized = geometry = page_limit = 0;
+    bbt_valid = 0; armed = NO_BLOCK;
     GATE |= NF_GATE;
     dsb();
     if (!(GATE & NF_GATE)) return -1;
@@ -209,6 +216,7 @@ static int onfi(void)
     unsigned good = 0, selected = 0;
     if (!initialized || !geometry) return -1;
     page_limit = HALF_PAGES;
+    bbt_valid = 0; armed = NO_BLOCK;
     select_chip(); NFCMD = 0x90u; NFADDR = 0x20u; delay_bus();
     for (unsigned i = 0; i < 4u; ++i) signature[i] = NFDATA;
     deselect();
@@ -417,6 +425,259 @@ static int scan(unsigned blocks)
     console_reg("Non-FF first OOB candidates=", suspect);
     return 0;
 }
+
+/* In-memory, conservative marker table. Never writes factory markers. */
+static int marker_bad(unsigned block)
+{
+    static const unsigned pages[] = {0u,1u,PPB-1u};
+    unsigned bad = 0;
+    for (unsigned i=0; i<3u; ++i) {
+        if (begin_read(block*PPB+pages[i], PAGE)) return -1;
+        if (NFDATA != 0xffu) bad=1;
+        deselect();
+    }
+    return (int)bad;
+}
+static void quarantine(unsigned block)
+{
+    bbt[block>>3] |= (uint8_t)(1u<<(block&7u));
+}
+static int bbt_scan(void)
+{
+    unsigned count=0;
+    bbt_valid=0; armed=NO_BLOCK;
+    if (page_limit != LIMIT_PAGES) return -1;
+    for (unsigned i=0;i<sizeof(bbt);++i) bbt[i]=0;
+    for (unsigned b=0;b<BLOCKS;++b) {
+        int rc=marker_bad(b);
+        if (rc<0) return -1;
+        if (rc) { quarantine(b); ++count; console_reg("BBT candidate=",b); }
+        if ((b&1023u)==1023u) console_reg("BBT scanned=",b+1u);
+    }
+    bbt_valid=1;
+    console_reg("BBT candidates=",count);
+    console_write("BBT READY (RAM only; first, second and last page markers)\r\n");
+    return 0;
+}
+static int is_ff(const uint8_t *p, unsigned n)
+{
+    for(unsigned i=0;i<n;++i) if(p[i]!=0xffu) return 0;
+    return 1;
+}
+static int blank_block(unsigned b)
+{
+    if (!bbt_valid || page_limit!=LIMIT_PAGES || b<64u || b>=BLOCKS-32u ||
+        (bbt[b>>3] & (1u<<(b&7u)))) return -1;
+    int m=marker_bad(b);
+    if(m) { if(m>0) quarantine(b); return -1; }
+    for(unsigned p=0;p<PPB;++p) {
+        if(read_page(b*PPB+p,buf)) return -1;
+        if(!is_ff(buf,PAGE+OOB)) return 0;
+        if(read_page(b*PPB+p,copy) || !same(buf,copy,PAGE+OOB)) return -1;
+    }
+    return 1;
+}
+static int candidates(void)
+{
+    unsigned found=0;
+    if(!bbt_valid) return -1;
+    /* Sample only. A blank block can still belong to a live partition. */
+    for(unsigned b=BLOCKS-33u;b>=BLOCKS-64u;--b) {
+        if(blank_block(b)==1) {
+            console_reg("Blank candidate block=",b);
+            console_write("Decimal block: "); console_dec(b); console_write("\r\n");
+            if(++found==3u) break;
+        }
+    }
+    console_write("Candidates are NOT proven free/reserved. Verify partition map and backup before arming.\r\n");
+    return found?0:-1;
+}
+static int prepare_scratch(unsigned block)
+{
+    armed=NO_BLOCK;
+    if(blank_block(block)!=1) {
+        console_write("SCRATCH REFUSED: not twice-read all-FF, protected, or BBT invalid\r\n");
+        return -1;
+    }
+    armed=block;
+    console_reg("Scratch armed (one use, RAM only)=",block);
+    console_write("WARNING: blank is not proof of ownership. Only continue after backup and partition review.\r\n");
+    console_write("Explicit command: nand rwtest BLOCK (programs and erases the armed block)\r\n");
+    return 0;
+}
+static void row_address(unsigned page)
+{
+    NFADDR=(uint8_t)page; NFADDR=(uint8_t)(page>>8); NFADDR=(uint8_t)(page>>16);
+}
+static int write_status(void)
+{
+    NFCMD=0x70u;
+    delay_bus();
+    uint8_t st=NFDATA;
+    console_reg("Write status=",st);
+    return ((st&0xc1u)==0xc0u)?0:-1;
+}
+static int writable(void)
+{
+    select_chip(); NFCMD=0x70u; delay_bus();
+    uint8_t st=NFDATA; deselect();
+    return ((st&0xc0u)==0xc0u)?0:-1;
+}
+static int write_wait(void)
+{
+    /* tBERS max 10 ms; bounded generous polling budget, not a calibrated timeout. */
+    delay_bus();
+    for(unsigned n=20000000u;n;--n) if(NFSTAT&1u) return write_status();
+    console_write("Write/erase timeout; cold restart, do not retry blindly\r\n");
+    return -1;
+}
+static int ecc_wait(uint32_t flag)
+{
+    for(unsigned n=2000000u;n;--n)
+        if((ECCSTAT&(ECC_BUSY|flag))==flag) return 0;
+    return -1;
+}
+static void ecc_begin(uint32_t mode)
+{
+    NFCONT|=1u<<7;
+    ECCCONF=(511u<<16)|3u;
+    ECCSTAT=DECODE_DONE|ENCODE_DONE;
+    ECCCONT=mode;
+    NFCONT|=1u<<5;
+    ECCCONT=mode|(1u<<2);
+    NFCONT&=~(1u<<7);
+    dsb();
+}
+/* Only called inside a one-shot, explicitly armed scratch experiment. */
+static int program_test_page(unsigned page,uint8_t *data,int encode)
+{
+    uint32_t conf=ECCCONF,cont=ECCCONT&~(1u<<2);
+    int rc=-1;
+    if(page>=page_limit || writable()) return -1;
+    select_chip(); NFCMD=0x80u; NFADDR=0; NFADDR=0; row_address(page);
+    for(unsigned sec=0;sec<4u;++sec) {
+        if(encode) ecc_begin(1u<<16);
+        for(unsigned i=0;i<512u;++i) NFDATA=data[sec*512u+i];
+        NFCONT|=1u<<7;
+        dsb();
+        if(encode) {
+            if(ecc_wait(ENCODE_DONE)) {
+                console_write("ECC encode timeout; aborting unconfirmed program\r\n");
+                goto abort;
+            }
+            for(unsigned i=0;i<13u;++i)
+                data[PAGE+12u+sec*13u+i]=(uint8_t)(ECCREG(0x90u+(i>>2)*4u)>>((i&3u)*8u));
+        }
+    }
+    for(unsigned i=0;i<OOB;++i) NFDATA=data[PAGE+i];
+    dsb(); NFCMD=0x10u;
+    rc=write_wait();
+    goto finish;
+abort:
+    NFCMD=0xffu; (void)ready();
+finish:
+    NFCONT|=1u<<7;
+    ECCCONF=conf; ECCCONT=cont; ECCSTAT=DECODE_DONE|ENCODE_DONE;
+    deselect();
+    return rc;
+}
+/* Decode into RAM only. Do not program corrected bytes into NAND. */
+static int corrected_page(unsigned page,uint8_t *out,unsigned *errors)
+{
+    uint32_t conf=ECCCONF,cont=ECCCONT&~(1u<<2);
+    unsigned total=0;
+    int rc=-1;
+    if(read_page(page,buf)) return -1;
+    for(unsigned sec=0;sec<4u;++sec) {
+        unsigned col=sec*512u,parity=PAGE+12u+sec*13u;
+        uint8_t *dst=out+col;
+        if(is_ff(buf+col,512u)&&is_ff(buf+parity,13u)) {
+            for(unsigned i=0;i<512u;++i) dst[i]=0xffu;
+            continue;
+        }
+        if(begin_read(page,col)) goto finish;
+        ecc_begin(0);
+        for(unsigned i=0;i<512u;++i) dst[i]=NFDATA;
+        random_column(parity);
+        for(unsigned i=0;i<13u;++i) copy[parity+i]=NFDATA;
+        NFCONT|=1u<<7;
+        dsb();
+        if(ecc_wait(DECODE_DONE)) goto finish;
+        uint32_t status=ECCSECSTAT;
+        unsigned n=status&15u;
+        console_reg("ECC sector status=",status);
+        if(!same(dst,buf+col,512u)||!same(copy+parity,buf+parity,13u)||n>8u) goto finish;
+        /* A nonblank sector must not be accepted as hardware free-page. */
+        if(status&(1u<<29)) goto finish;
+        for(unsigned i=0;i<n;++i) {
+            unsigned pos=(ECCREG(0xc0u+(i>>1)*4u)>>((i&1u)*16u))&1023u;
+            unsigned pat=(ECCREG(0xf0u+(i>>2)*4u)>>((i&3u)*8u))&255u;
+            if(pos>=525u||!pat) goto finish;
+            if(pos<512u) dst[pos]^=(uint8_t)pat;
+            console_reg("Corrected byte location=",pos);
+            console_reg("Error pattern=",pat);
+        }
+        total+=n;
+        deselect();
+    }
+    *errors=total; rc=0;
+finish:
+    NFCONT|=1u<<7;
+    ECCCONF=conf; ECCCONT=cont; ECCSTAT=DECODE_DONE|ENCODE_DONE;
+    deselect();
+    return rc;
+}
+static int erase_scratch(unsigned b)
+{
+    if(writable()) return -1;
+    select_chip(); NFCMD=0x60u; row_address(b*PPB);
+    dsb(); NFCMD=0xd0u;
+    int rc=write_wait(); deselect();
+    if(rc) return -1;
+    for(unsigned i=0;i<PPB;++i)
+        if(read_page(b*PPB+i,buf)||!is_ff(buf,PAGE+OOB)) return -1;
+    return 0;
+}
+static int rwtest(unsigned b)
+{
+    unsigned permit=armed, errors=0, page=b*PPB;
+    armed=NO_BLOCK;
+    if(b!=permit||blank_block(b)!=1) {
+        console_write("RWTEST REFUSED: arm exact blank block first; authorization consumed\r\n");
+        return -1;
+    }
+    console_write("RWTEST: two pages in one authorized scratch block; final erase only on success\r\n");
+    for(unsigned i=0;i<PAGE;++i) expected[i]=(uint8_t)(i*37u+(i>>3)+0x5au);
+    for(unsigned i=PAGE;i<PAGE+OOB;++i) expected[i]=0xffu;
+    if(program_test_page(page,expected,1) || read_page(page,buf) ||
+       !same(buf,expected,PAGE+OOB) || is_ff(expected+PAGE+12u,52u)) goto fail;
+    console_write("PAGE PROGRAM + ECC ENCODE + RAW VERIFY PASS\r\n");
+    if(corrected_page(page,injected,&errors)||errors||!same(injected,expected,PAGE)) goto fail;
+    console_write("CLEAN ECC READ PASS\r\n");
+    for(unsigned i=0;i<PAGE+OOB;++i) injected[i]=expected[i];
+    injected[17]^=1u;
+    for(unsigned i=0;i<8u;++i) injected[512u+23u+i*17u]^=1u;
+    if(program_test_page(page+1u,injected,0)||read_page(page+1u,buf)||
+       !same(buf,injected,PAGE+OOB)) goto fail;
+    if(corrected_page(page+1u,injected,&errors)||errors!=9u||
+       !same(injected,expected,PAGE)) goto fail;
+    console_write("BCH8 INJECTION PASS: 1 and 8 single-bit errors restored in RAM\r\n");
+    if(erase_scratch(b)) goto fail;
+    console_write("BLOCK ERASE + ALL 64 PAGES RAW FF VERIFY PASS\r\n");
+    console_write("NAND RWTEST PASS\r\n");
+    return 0;
+fail:
+    quarantine(b);
+    console_write("NAND RWTEST FAIL: block quarantined in RAM; no automatic retry/cleanup. Preserve log.\r\n");
+    return -1;
+}
+static int phase3(void)
+{
+    if(nand_command("testall")) return -1;
+    if(bbt_scan()) return -1;
+    return candidates();
+}
+
 int nand_command(const char *args)
 {
     unsigned n;
@@ -424,6 +685,7 @@ int nand_command(const char *args)
         console_write("Stop timer before NAND diagnostics.\r\n");
         return -1;
     }
+    if (equal(args, "phase3")) return phase3();
     if (equal(args, "regs")) { regs(); return 0; }
     if (equal(args, "init")) return init();
     if (equal(args, "testall")) {
@@ -465,7 +727,7 @@ int nand_command(const char *args)
     if (equal(args, "id")) { get_id(copy); show_id();
         if (!same(id, copy, 5u)) {
             console_write("NAND ID changed; reinitialize\r\n");
-            initialized = geometry = 0;
+            initialized = geometry = page_limit = bbt_valid = 0; armed = NO_BLOCK;
             return -1;
         }
         return 0;
@@ -474,6 +736,10 @@ int nand_command(const char *args)
         select_chip(); NFCMD = 0x70u; delay_bus();
         console_reg("NAND STATUS=", NFDATA); deselect(); return 0;
     }
+    if (equal(args, "bbt")) return bbt_scan();
+    if (equal(args, "candidates")) return candidates();
+    if (prefix(args, "scratch ") && !number(args+8,&n)) return prepare_scratch(n);
+    if (prefix(args, "rwtest ") && !number(args+7,&n)) return rwtest(n);
     if (equal(args, "onfi")) return onfi();
     if (equal(args, "boundary")) return boundary();
     if (equal(args, "bench")) return bench();
