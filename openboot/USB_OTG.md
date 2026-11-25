@@ -1,175 +1,189 @@
-# USB OTG bring-up — read-only iROM handoff probe
+# USB OTG 驱动开发与实机验证
 
-Next milestone: independently enumerate as a USB device, implement EP0 control transfers, bulk OUT into validated DDR, then a native C++ two-stage host upload. This commit is only the register survey, not an enumeration or download driver.
+本文按时间顺序记录从只读 iROM 状态探测到独立 USB 枚举、PIO 传输、同连接 DMA 启动的开发过程。各阶段的“未验证”表示当时提交的状态，并非否定后续实机结果。当前推荐入口见 [README.md](README.md)。
 
-Sources for register layout:
-- Linux S5PV210 device tree: https://code.googlesource.com/linux/torvalds/linux/+/c6e169bc146a76d5ccbf4d3825f705414352bd03/arch/arm/boot/dts/s5pv210.dtsi (OTG 0xec000000; PHY 0xec100000)
-- Linux PHY driver: https://codebrowser.dev/linux/linux/drivers/phy/samsung/phy-s5pv210-usb2.c.html (device PHY isolation control 0xe010e80c bit 0)
-- Linux clock driver: https://codebrowser.dev/linux/linux/drivers/clk/samsung/clk-s5pv210.c.html (CLK_GATE_IP1 0xe0100464 bit 16)
-- DWC2 register definitions: https://codebrowser.dev/linux/linux/drivers/usb/dwc2/hw.h.html
+## 只读 iROM 接管探测
 
-Build from openboot:
+最初目标：独立枚举为 USB 设备，实现 EP0 控制传输、向已验证 DDR 写入的 bulk OUT，以及原生 C++ 双阶段主机上传。此阶段仅调查寄存器，不实现枚举或下载驱动。
+
+寄存器布局参考：
+
+- Linux S5PV210 设备树：https://code.googlesource.com/linux/torvalds/linux/+/c6e169bc146a76d5ccbf4d3825f705414352bd03/arch/arm/boot/dts/s5pv210.dtsi （OTG 0xec000000；PHY 0xec100000）
+- Linux PHY 驱动：https://codebrowser.dev/linux/linux/drivers/phy/samsung/phy-s5pv210-usb2.c.html （设备 PHY 隔离控制 0xe010e80c bit 0）
+- Linux 时钟驱动：https://codebrowser.dev/linux/linux/drivers/clk/samsung/clk-s5pv210.c.html （CLK_GATE_IP1 0xe0100464 bit 16）
+- DWC2 寄存器定义：https://codebrowser.dev/linux/linux/drivers/usb/dwc2/hw.h.html
+
+在 openboot 目录构建：
+
     git pull
     sh boot/build.sh
 
-Cold power-cycle into iROM USB mode, open UART0 at 115200 8N1, then:
+完全断电进入 iROM USB 模式，打开 UART0（115200 8N1）：
+
     sudo ./build-host/tq210-dnw out/rom_usb_probe.bin --pad-vendor-size
 
-Capture the entire USB OTG STATE section, plus DDR startup results. The probe runs before DDR initialization. After normal DDR scratch/exec PASS, lowercase u repeats the snapshot. On Ubuntu record lsusb before and after loading (no new enumeration is initiated by this firmware). If a register read stalls, last printed register label helps identify the block; cold power-cycle and use rom_ddr_full.bin to recover. If the gate is off or PHY isolated, probe stops without enabling them. If core ID is not the expected OTG signature or controller is in host mode, it avoids device-specific reads. No FIFO read/pop, core reset, interrupt acknowledgements, USB writes, or NAND/SD writes. USB state may change asynchronously. No claim that iROM USB remains enumerated. This new variant has been source-reviewed but not cross-compiled or hardware-tested yet.
+记录完整 USB OTG STATE 段及 DDR 启动结果。探测发生在 DDR 初始化前，正常 DDR scratch/exec PASS 后可发送小写 u 重复快照。在 Ubuntu 记录加载前后的 lsusb（本固件不主动重新枚举）。寄存器读取挂起时，最后的寄存器标签可帮助定位；断电并使用 rom_ddr_full.bin 恢复。如果时钟门控关闭或 PHY 隔离，则停止而不启用；若核心 ID 与预期 OTG 签名不同，或控制器处于主机模式，则避免设备专用读取。不读取/弹出 FIFO，不复位核心，不清除中断，不写 USB 或 NAND/SD。USB 状态可能异步变化，不能断言 iROM USB 仍保持枚举。此版本初次提交时仅审查源码，未交叉编译或实机验证。
 
+## iROM 接管实机观察（2026-11-25）
 
-## Observed iROM handoff, 2026-11-25
+DDR 初始化前后两份快照一致：GSNPSID=0x4F54281A（DWC OTG 2.81a），PHY_PWR=0x30，PHY_CLK=3，PHY_RST=0，PHY control=1，gate IP1=0xFFFFFFFF，设备模式，GAHBCFG=0x27（DMA 启用），GUSBCFG=0x540F，GRSTCTL=0x80000000，GHWCFG2=0x228FFC50，GHWCFG3=0x1E8084E8，GHWCFG4=0xFFF04030，RX FIFO 1024 字，非周期 TX FIFO 256 字，DCFG=0x40190，DOEPCTL2=0x000B8200（bulk OUT，最大包 512 字节），DOEPDMA2=0xD0022BB4。主机 lsusb 仍显示 04e8:1234。EP0 DMA 地址不是有效的应用缓冲区，不应向继承设备发送进一步 USB 流量。ROM 枚举仍可见并不证明自研驱动工作。
 
-Two snapshots before and after DDR init agreed on GSNPSID=0x4F54281A (DWC OTG 2.81a), PHY_PWR=0x30, PHY_CLK=3, PHY_RST=0, PHY control=1, gate IP1=0xFFFFFFFF, device mode, GAHBCFG=0x27 (DMA enabled), GUSBCFG=0x540F, GRSTCTL=0x80000000, GHWCFG2=0x228FFC50, GHWCFG3=0x1E8084E8, GHWCFG4=0xFFF04030, RX FIFO 1024 words, nonperiodic TX FIFO 256 words, DCFG=0x40190, DOEPCTL2=0x000B8200 (bulk OUT, 512 byte max packet), DOEPDMA2=0xD0022BB4. Host lsusb still showed 04e8:1234. EP0 DMA addresses were not valid application buffers; do not send further USB traffic to the inherited device. The ROM enumeration remains visible, not evidence of our own driver.
+## 实验性 EP0 独立枚举
 
-## Experimental EP0-only enumeration
-
-New rom_usb_enum.bin retains validated DDR settings. It starts with the normal UART console; send lowercase e once to disconnect the ROM device, reset the OTG core, switch to PIO/polling (DMA disabled), and reconnect with a private test VID:PID 1209:0001, manufacturer OpenBoot, product TQ210 OTG 1. This PID is not unique and is for private testing only, not distributed devices: https://pid.codes/1209/0001/. No bulk endpoints are advertised yet. A vendor-class interface with zero endpoints is intentional; this only tests device descriptors and standard EP0 requests. Driver is in boot/usb_enum.inc. DWC2 register/SET_ADDRESS behavior checked against Linux gadget.c and TinyUSB DWC2 slave-mode RX FIFO handling. Code is newly written; no target validation or cross-compilation performed for this commit.
+rom_usb_enum.bin 保留已验证 DDR 参数。启动正常 UART 控制台后发送一次小写 e，断开 ROM 设备、复位 OTG 核心、切换到 PIO/轮询（关闭 DMA），以私有测试 VID:PID 1209:0001 重新连接，制造商 OpenBoot、产品 TQ210 OTG 1。该 PID 并非独占，仅供私有测试，不用于分发的设备：https://pid.codes/1209/0001/。暂不声明 bulk 端点；零端点的厂商类接口是有意设计，仅测试设备描述符与 EP0 标准请求。驱动最初位于 boot/usb_enum.inc，重构后为 drivers/usb/usb_enum.c。DWC2 寄存器与 SET_ADDRESS 行为参考 Linux gadget.c 和 TinyUSB DWC2 slave-mode RX FIFO 处理。初次提交时为新代码，未交叉编译或实机验证。
 
     git pull
     sh boot/build.sh
-    # cold power-cycle into iROM, open UART0
+    # 冷启动进入 iROM，打开 UART0
     sudo ./build-host/tq210-dnw out/rom_usb_enum.bin --pad-vendor-size
 
-In Ubuntu another terminal can run sudo dmesg -w. After DDR EXEC PASS, send e via UART. Expect USB SOFT DISCONNECT, USB RECONNECT, USB BUS RESET, USB ENUM SPEED FIELD, SETUP logs, SET ADDRESS, SET CONFIGURATION=1, OPENBOOT USB CONFIGURED. Check lsusb and sudo lsusb -v -d 1209:0001. In VMware the new VID/PID may attach to the host instead of the guest; manually reconnect the new device to Ubuntu if necessary. If only Samsung remains or the new device does not enumerate, capture all UART and kernel messages. If e hangs or q disconnects, cold power-cycle to restore the ROM. No NAND/SD access. Do not send another DNW image to the enumeration-only device.
+Ubuntu 另一终端可运行 sudo dmesg -w。DDR EXEC PASS 后经 UART 发送 e。预期 USB SOFT DISCONNECT、USB RECONNECT、USB BUS RESET、USB ENUM SPEED FIELD、SETUP 日志、SET ADDRESS、SET CONFIGURATION=1、OPENBOOT USB CONFIGURED。检查 lsusb 和 sudo lsusb -v -d 1209:0001。VMware 中新 VID/PID 可能连接到宿主机而非虚拟机，必要时手动连接至 Ubuntu。若只剩 Samsung 设备或新设备未枚举，记录完整 UART 与内核消息。若 e 挂起或 q 断开连接，断电恢复 ROM。不访问 NAND/SD。不要向仅支持枚举的设备发送另一份 DNW 镜像。
 
+## Windows 枚举结果及沿用 DNW 驱动 ID（2026-11-25）
 
-## Windows enumeration result and existing DNW driver ID (2026-11-25)
+用户在 Windows USB 检查工具中看到自定义 1209:0001 设备：OpenBoot / TQ210 OTG 1，USB 2.0 High-Speed，设备、配置、接口、限定符及其他速度描述符均正确解析。Windows 报问题代码 28、配置 0，VMware 未提供该设备。未看到 SET_CONFIGURATION。不支持的 Microsoft OS 字符串 0xEE 与 BOS 请求被 STALL，但未妨碍描述符枚举。
 
-The user observed the custom 1209:0001 device in a Windows USB inspection utility: OpenBoot / TQ210 OTG 1, USB 2.0 High-Speed, device/configuration/interface/qualifier/other-speed descriptors parsed correctly. Windows reported problem code 28 and configuration 0, and VMware did not offer the device. No SET_CONFIGURATION was seen. Unsupported Microsoft OS string 0xEE and BOS requests were stalled; this did not prevent descriptor enumeration.
-
-The SDK's Windows平台工具/TQBoardUSB下载驱动/TQBoardUSB下载驱动/EmbedSky_TQ_Board.inf specifies DeviceID = "VID_04E8&PID_1234" and libusb-win32, default configuration 1. For private development on this board, rom_usb_dnw_enum.bin now advertises that VID/PID to reuse the already installed driver and VMware matching. Manufacturer/product strings remain OpenBoot / TQ210 OTG 1, and the interface intentionally advertises zero bulk endpoints. This is ID-level compatibility, NOT a byte-for-byte clone or DNW protocol compatibility. The original BL2 blob b271436e5e693a1de43b872a4c8b1d3d2937a83d contains other-speed configuration data (full speed IN 0x83 / OUT 0x04, MPS 64; high speed IN 0x81 / OUT 0x02, MPS 512), which will be used as a reference when implementing the actual endpoints. Do not advertise unimplemented endpoints. Same VID/PID as iROM is ambiguous; never use automatic same-ID detection as proof of stage2 readiness.
+SDK 中 `windows-tools/tqboard-usb-download-driver/tqboard-usb-download-driver/EmbedSky_TQ_Board.inf` 指定 DeviceID = "VID_04E8&PID_1234" 与 libusb-win32，默认配置 1。为本板私有开发，rom_usb_dnw_enum.bin 声明该 VID/PID，复用已安装的驱动与 VMware 匹配。制造商/产品仍为 OpenBoot / TQ210 OTG 1，接口仍有意声明零 bulk 端点。这仅是 ID 层兼容，不是逐字节克隆或 DNW 协议兼容。原厂 BL2 blob b271436e5e693a1de43b872a4c8b1d3d2937a83d 包含其他速度配置（全速 IN 0x83 / OUT 0x04，MPS 64；高速 IN 0x81 / OUT 0x02，MPS 512），供实现真实端点时参考。不要声明未实现端点。与 iROM 相同 VID/PID 有歧义，不得以自动检测同 ID 作为 stage2 就绪的证据。
 
     git pull
     sh boot/build.sh
-    # cold reboot into iROM USB mode, open UART0
+    # 冷启动进入 iROM USB 模式，打开 UART0
     sudo ./build-host/tq210-dnw out/rom_usb_dnw_enum.bin --pad-vendor-size
 
-After DDR EXEC PASS, send lowercase e. Confirm UART announces "USB RECONNECT: local DNW driver ID 04e8:1234; EP0 only". Check Windows Device Manager / USB inspector and VMware Removable Devices. Attach to Ubuntu if necessary. Expect SET CONFIGURATION=1 and OPENBOOT USB CONFIGURED if the host selects the configuration. In Ubuntu use lsusb -d 04e8:1234 and sudo lsusb -v -d 04e8:1234; confirm product is TQ210 OTG 1, not the ROM product. The prior rom_usb_enum.bin remains available unchanged. Do not start the DNW tool again, since bulk is not implemented. No firmware binary or original driver modified. Reuse of installed driver is expected, not guaranteed (driver policy/cache/VMware may affect binding). Source-reviewed, not cross-compiled or hardware-tested yet.
+DDR EXEC PASS 后发送小写 e。确认 UART 输出 "USB RECONNECT: local DNW driver ID 04e8:1234; EP0 only"。检查 Windows 设备管理器/USB 检查工具与 VMware 可移动设备，必要时连接到 Ubuntu。如果主机选择配置，预期 SET CONFIGURATION=1 和 OPENBOOT USB CONFIGURED。在 Ubuntu 使用 lsusb -d 04e8:1234 与 sudo lsusb -v -d 04e8:1234，确认产品为 TQ210 OTG 1 而非 ROM 产品。原 rom_usb_enum.bin 保持不变。由于尚未实现 bulk，不要再次启动 DNW 工具。不修改原厂固件二进制或驱动。预期但不保证复用驱动（策略、缓存、VMware 均可能影响绑定）。初次提交时仅审查源码，未编译或实机验证。
 
+## DNW-ID 接管诊断
 
-## DNW-ID takeover diagnostics
-The first DNW-ID variant reportedly stopped printing after USB SOFT DISCONNECT, before its reconnect message. That does not establish a VID/PID or Windows driver failure: no new descriptors have been sent yet. This update logs each takeover step and the pre-reset GAHBCFG/DCTL/GRSTCTL values, masks controller interrupts before asserting disconnect, waits for disconnect to settle before resetting the core, and replaces the original 50-million-iteration volatile SRAM loop with a register-only ARM delay. All existing bounded AHB/core reset/FIFO waits are retained with register diagnostics on timeout. The PHY, DDR, EP0 descriptors and test VID/PID choices are unchanged. Delay duration is approximate, not measured. MMIO bus stalls cannot be bounded by software polling; the last step label is intended to identify them.
+首个 DNW-ID 版本曾在 USB SOFT DISCONNECT 后、重连消息前停止输出。这不能证明 VID/PID 或 Windows 驱动故障，因为新描述符尚未发送。此次更新记录每个接管步骤与复位前 GAHBCFG/DCTL/GRSTCTL，断开连接前屏蔽控制器中断，断开稳定后再复位，并将原 5000 万次 volatile SRAM 循环改为仅寄存器 ARM 延时。保留限时 AHB/核心复位/FIFO 等待及超时寄存器诊断。PHY、DDR、EP0 描述符及测试 VID/PID 不变。延时未实际测量。MMIO 总线挂起无法由软件轮询限定，最后步骤标签用于定位。
 
-Rebuild and cold-boot rom_usb_dnw_enum.bin as before; send lowercase e once after DDR EXEC PASS. Capture from PRE GAHBCFG through the last [USB n] step or USB RECONNECT. If it stops, do not repeatedly send e; cold power-cycle to recover. If needed compare rom_usb_enum.bin (1209:0001) with the same takeover code, using separate cold boots. Neither variant supports bulk downloads yet. Source reviewed; no cross-build or hardware validation for this revision.
+重新构建并冷启动 rom_usb_dnw_enum.bin，DDR EXEC PASS 后发送一次小写 e。记录 PRE GAHBCFG 至最后的 [USB n] 步骤或 USB RECONNECT。停止时不要反复发送 e，断电恢复。必要时在独立冷启动中比较使用相同接管代码的 rom_usb_enum.bin（1209:0001）。两版均不支持 bulk 下载。此修订当时仅审查源码，未交叉编译或实机验证。
 
+## EP0 接管确认；EP2 PIO bulk 实验
 
-## EP0 takeover confirmed; EP2 PIO bulk experiment
-The 7343cb2 build completed all eleven takeover steps and reached SET_CONFIGURATION=1 and OPENBOOT USB CONFIGURED on the user's board. Brief pauses at steps 3 and 7 are intentional register-loop delays; their real duration was not measured. Preserve rom_usb_dnw_enum.bin as the EP0 baseline.
+用户板卡上的 7343cb2 构建完成全部 11 个接管步骤，达到 SET_CONFIGURATION=1 与 OPENBOOT USB CONFIGURED。步骤 3、7 短暂停顿是有意的寄存器循环延时，未实测时长。保留 rom_usb_dnw_enum.bin 作为 EP0 基线。
 
-New rom_usb_bulk.bin advertises a single OUT endpoint 0x02 (512-byte HS, 64-byte FS) and product TQ210 Bulk Test, bcdDevice 2, same local development VID/PID 04e8:1234. Bulk IN and original DNW stage2 protocol are NOT implemented. The device uses PIO, one packet per arm, and receives a 16-byte LE header (OBL1 magic 0x314c424f, payload length, standard CRC32, reserved 0), followed by payload. Maximum 16 MiB to fixed validated DDR region 0x24000000; no arbitrary address or execution. CRC32 is computed from DDR readback. Vendor EP0 read-only request C0/5A, value 4F42, index 4C31, length 20 reports magic, state (0 ready/1 receive/2 pass/3 fail), received count, expected length, CRC. Reset/reconfiguration discards transfer state. The new host --bulk-test checks product string, revision, active configuration and protocol magic before any bulk writes, sends 1 MiB+13 bytes and verifies device status; do not run it against iROM or earlier variants.
+新 rom_usb_bulk.bin 声明一个 OUT 端点 0x02（HS 512 字节，FS 64 字节），产品 TQ210 Bulk Test，bcdDevice 2，本地开发 VID/PID 仍为 04e8:1234。不实现 Bulk IN 或原厂 DNW stage2 协议。设备以 PIO 每次 arm 一个包，接收 16 字节小端包头（OBL1 magic 0x314c424f、有效长度、标准 CRC32、保留 0），随后接收有效数据。固定已验证 DDR 目的地址 0x24000000，最大 16 MiB；无任意地址或执行功能。CRC32 从 DDR 读回计算。厂商 EP0 只读请求 C0/5A，value 4F42，index 4C31，length 20，返回 magic、状态（0 就绪/1 接收/2 通过/3 失败）、已接收数量、预期长度、CRC。复位/重新配置丢弃传输状态。主机 --bulk-test 在 bulk 写之前检查产品字符串、版本、活动配置和协议 magic，发送 1 MiB+13 字节并验证设备状态，不要用于 iROM 或早期固件。
 
     git pull
     sh boot/build.sh
     cmake --build build-host
-    # cold reboot into ROM mode; UART open
+    # 冷启动进入 ROM 模式，打开 UART
     sudo ./build-host/tq210-dnw out/rom_usb_bulk.bin --pad-vendor-size
 
-Send e; attach TQ210 Bulk Test to Ubuntu. Confirm EP2 BULK OUT READY MPS=0x00000200 and OPENBOOT USB CONFIGURED. Run:
+发送 e，将 TQ210 Bulk Test 连接到 Ubuntu。确认 EP2 BULK OUT READY MPS=0x00000200 和 OPENBOOT USB CONFIGURED：
 
     lsusb -d 04e8:1234
     sudo ./build-host/tq210-dnw --bulk-test
 
-Expected BULK DDR VERIFY PASS on both host and UART, same CRC32. Stop on any error, cold power-cycle, and capture logs. No second upload to an already-used receiver; no execution or flash write. Newly written source, not cross-compiled or board-tested in this submission. Driver timing, endpoint interrupts and FS transfer remain experimental.
+预期主机和 UART 均输出 BULK DDR VERIFY PASS 且 CRC32 相同。错误时停止、断电并记录日志。不可向已用过的接收器第二次上传；不执行代码或写 Flash。初次提交时未交叉编译或实机验证，驱动时序、端点中断及 FS 传输仍为实验性。
 
+## EP2 bulk 数据传输实机验证
 
-## EP2 bulk data transport validated
-User's rom_usb_bulk.bin plus native --bulk-test transferred 1,048,589 payload bytes (+16 header), all 1,048,605 wire bytes. Host and DDR readback CRC32 both 0x6eefefc7. Last short packet accepted. No timing data was provided; HS link rate is not measured throughput.
+用户使用 rom_usb_bulk.bin 与原生 --bulk-test 成功传输 1,048,589 字节有效数据（另有 16 字节包头），共 1,048,605 字节。主机与 DDR 读回 CRC32 均为 0x6eefefc7。最后短包正常接收。未提供耗时，高速 USB 链路速率不等于实测吞吐量。
 
-## Experimental ARM DDR image loader
-rom_usb_exec.bin adds the executable flag (header word 3 = 1), product TQ210 Exec Test, bcdDevice=3. Preserves fixed 0x24000000 destination, max 16 MiB, requires 4-byte-aligned length for executable images; the previous bulk firmware accepts only flag 0. New --load FILE checks identity and protocol, transfers the image, and verifies status/CRC, but never starts it automatically. Only lowercase x on UART, after host verification, allows execution of a verified flag-1 image; ordinary --bulk-test data cannot execute. It checks MMU/D-cache off and USB DMA disabled, verifies DDR CRC again, disconnects USB, disables IRQ/FIQ, invalidates I-cache and branch predictor, then calls ARM entry 0x24000000. SVC mode, existing iRAM stack and VBAR inherited; payload is responsible for runtime, stack and exception vectors. Return stops in OpenBoot. No Linux boot protocol, relocation, ELF parsing or flash write. This is intended for trusted local bare-metal images, not authenticated boot.
+## 实验性 ARM DDR 镜像加载器
 
-Build:
+rom_usb_exec.bin 新增可执行标志（包头第 4 个字=1）、产品 TQ210 Exec Test、bcdDevice=3。目的地址仍为 0x24000000，最大 16 MiB；可执行镜像长度须 4 字节对齐。此前 bulk 固件仅接受标志 0。新 --load FILE 检查设备身份及协议，传输镜像，校验状态/CRC，但不自动执行。只有主机验证完成后 UART 发送小写 x 才执行通过校验的 flag-1 镜像；普通 --bulk-test 数据不能执行。检查 MMU/D-cache 关闭及 USB DMA 禁用，再次校验 DDR CRC，断开 USB，屏蔽 IRQ/FIQ，使 I-cache 和分支预测器失效，再调用 ARM 入口 0x24000000。继承 SVC 模式、iRAM 栈与 VBAR；镜像负责自身运行时、栈、异常向量。返回后停止在 OpenBoot。不实现 Linux 启动协议、重定位、ELF 解析或 Flash 写入；用于可信本地裸机镜像，而非认证启动。
+
     git pull
     sh boot/build.sh
     cmake --build build-host
-    # cold reboot to iROM USB mode
+    # 冷启动进入 iROM USB 模式
     sudo ./build-host/tq210-dnw out/rom_usb_exec.bin --pad-vendor-size
 
-Send e in UART, attach new device to Ubuntu, wait for EP2 ready and OPENBOOT USB CONFIGURED:
+UART 发送 e，连接新设备至 Ubuntu，等待 EP2 就绪和 OPENBOOT USB CONFIGURED：
+
     sudo ./build-host/tq210-dnw --load out/ddr_app.bin
 
-After host BULK DDR VERIFY PASS, send lowercase x on UART. The independently linked stackless ARM test payload checks its entry address and prints "DDR APP EXEC PASS: independent ARM image at 0x24000000", then loops. Recover by cold power-cycle. Do not run --bulk-test before --load on the same receiver without reboot. Newly written source not cross-compiled or tested on target; original rom_usb_bulk.bin retained.
+主机 BULK DDR VERIFY PASS 后经 UART 发送小写 x。独立链接的无栈 ARM 测试检查入口地址并打印 "DDR APP EXEC PASS: independent ARM image at 0x24000000"，随后循环。断电恢复。不要在同一次启动中先 --bulk-test 再 --load。初次提交时新代码未编译或实机测试，保留原 rom_usb_bulk.bin。
 
+## 独立 DDR 执行验证
 
-## Independent DDR execution validated
-User ran rom_usb_exec.bin and --load out/ddr_app.bin, then UART x. 188 bytes (0xbc) received at 0x24000000, CRC32 0x9bb258bc matched on initial readback and second verification, USB disconnected, independent DDR APP EXEC PASS printed. This validates the manual two-stage boot chain at ROM clocks.
+用户运行 rom_usb_exec.bin、--load out/ddr_app.bin，再发送 UART x。在 0x24000000 接收 188 字节（0xbc），首次读回和二次 CRC32 均为 0x9bb258bc，USB 断开，打印独立 DDR APP EXEC PASS。这验证了 ROM 时钟下的手动双阶段启动链。
 
-## Experimental automatic two-stage boot
-rom_usb_auto.bin adds auto takeover after DDR checks, revision 4 / TQ210 Auto Boot, and explicit vendor control GO (40/5b, value 4f42, index 4c31, no data). Requires verified flag-1 image and completed EP0 IN status before launch, then waits briefly before disconnect and repeats DDR CRC. Existing UART x fallback retained. --boot verifies cold ROM product string, pads SRAM image to 11168 bytes, uses known ROM framing, waits up to 60 seconds for new product/revision and ready protocol status, sends DDR image and checks CRC, then issues GO. It does not resend stage1 automatically. Cold boot with only one matching board connected. Exact ROM product string check is conservative and may need adjustment for a differing ROM descriptor. VMware may require manual reattachment; do not send e/x unless diagnosing manually. Host GO ACK does not prove CPU execution; UART is the proof. No NAND/SD writes, Linux ABI, cryptographic authentication, or arbitrary addresses. New source not compiled or target-tested in this revision; known manual firmware remains available.
+## 实验性自动双阶段启动
+
+rom_usb_auto.bin 在 DDR 检查后自动接管，revision 4 / TQ210 Auto Boot，增加明确厂商控制 GO（40/5b，value 4f42，index 4c31，无数据）。要求校验通过的 flag-1 镜像及 EP0 IN 状态阶段完成，随后短暂等待、断开并重复 DDR CRC。保留 UART x 后备方式。--boot 验证冷 ROM 产品字符串，将 SRAM 镜像填充至 11168 字节，使用已知 ROM 封包，最长等待 60 秒以发现新产品/版本与就绪协议状态，发送 DDR 镜像并检查 CRC，最后发出 GO。不自动重发 stage1。冷启动只连接一块匹配板卡。精确 ROM 字符串检查较保守，不同 ROM 描述符可能需调整。VMware 可能要求手动重连；除手动诊断外不要发送 e/x。GO ACK 不代表 CPU 已执行，需 UART 证明。无 NAND/SD 写入、Linux ABI、密码学认证或任意地址。此修订当时未编译或实机验证，保留已知手动固件。
 
     git pull
     sh boot/build.sh
     cmake --build build-host
-    # cold reboot to iROM USB mode, keep UART monitor open
+    # 冷启动进入 iROM USB 模式，保持 UART 监视
     sudo ./build-host/tq210-dnw --boot out/rom_usb_auto.bin out/ddr_app.bin
 
-Expected final UART: DDR APP EXEC PASS: independent ARM image at 0x24000000. If auto firmware exceeds 11168 bytes, host refuses rather than sending an unverified ROM frame. If timeout/error occurs capture host and UART logs; cold reset before retry.
+预期最终 UART：DDR APP EXEC PASS: independent ARM image at 0x24000000。若固件超过 11168 字节，主机拒绝发送未验证的 ROM 帧。超时或错误时记录主机及 UART 日志，断电后再试。
 
+## 自动启动主机路径验证；耗时实验
 
-## Automatic boot host path validated; timing experiment
-The user's 0a2416b run completed both stages and USB GO ACK. No wall-clock timestamps or automatic-run UART success line were provided; actual program execution for this specific automatic run is not independently confirmed here (manual x execution was confirmed earlier).
+用户的 0a2416b 测试完成两个阶段和 USB GO ACK。未提供总耗时或该次自动启动的 UART 成功日志，因此此特定自动运行的实际执行未独立确认（此前手动 x 执行已确认）。
 
-The new host reports elapsed milliseconds for ROM upload, stage2 readiness including re-enumeration, DDR upload including host CRC, verification status, GO ACK, and total. Auto discovery checks device revision before requesting strings, polls every 50ms instead of 200ms, and uses a 1s readiness control request timeout (post-upload verification retains 30s). The 60s discovery deadline is not an intentional fixed wait. A slow synchronous libusb call may extend the deadline slightly.
+新主机报告 ROM 上传、stage2 就绪（含重新枚举）、DDR 上传（含主机 CRC）、验证状态、GO ACK 及总耗时，单位 ms。自动发现先检查设备版本，再读取字符串；轮询间隔 200ms 改为 50ms，就绪控制请求超时 1s（上传后的验证保持 30s）。60s 发现截止时间不是固定等待；缓慢的同步 libusb 调用可能稍微延长截止时间。
 
-New optional rom_usb_fast.bin keeps both original 40-million-iteration disconnect/device-mode settle delays, ROM framing, DDR checks, second CRC and USB identity. It reduces the separate pre-takeover and post-GO delays to 4 million iterations and suppresses the three verbose lines per EP0 SETUP request. Actual savings depend on CPU and host timing. The original rom_usb_auto.bin remains available with the original delays and logs. Neither variant changes the 400 MHz CPU clock or PIO bulk engine. These are experimental changes, not measured speedups; build and compare cold boots on the same VM.
+可选 rom_usb_fast.bin 保留两处 4000 万次断开/设备模式稳定延时、ROM 封包、DDR 检查、二次 CRC 和 USB 身份；独立的接管前与 GO 后延时缩短至 400 万次，并取消每个 EP0 SETUP 的三行详细日志。实际收益取决于 CPU 和主机时序。原 rom_usb_auto.bin 保留原延时与日志。两版均不改变 400 MHz CPU 时钟或 PIO 引擎。当时是实验修改而非实测速升，应在同一 VM 上分别冷启动比较。
 
     git pull
     sh boot/build.sh
     cmake --build build-host
-    # each command on a separate cold boot
+    # 每条命令单独冷启动
     sudo ./build-host/tq210-dnw --boot out/rom_usb_auto.bin out/ddr_app.bin
     sudo ./build-host/tq210-dnw --boot out/rom_usb_fast.bin out/ddr_app.bin
 
-Record all [TIME] lines and the final UART DDR APP EXEC PASS. Total measures host GO ACK, not final payload execution. If fast mode regresses, use baseline. No target cross-build or hardware validation performed for this commit. Further optimization should follow the measurements; VMware/Windows enumeration latency may dominate.
+记录所有 [TIME] 行及最终 UART DDR APP EXEC PASS。总耗时截止于主机 GO ACK，而非最终镜像执行。快速版退化时使用基线。此提交当时未交叉构建或实机验证，后续优化应依据测量，VMware/Windows 枚举可能占主要时间。
 
+## 快速启动耗时实测
 
-## Fast boot latency measurement
-User measured 19 ms ROM upload, 4925 ms stage2 readiness (includes DDR init and USB re-enumeration), 1 ms DDR upload, 18 ms verification, 0 ms GO ACK, total 4968 ms. This does not separately time device initialization or VMware enumeration; 99.1% is the aggregate readiness interval.
+用户测得 ROM 上传 19 ms、stage2 就绪 4925 ms（包括 DDR 初始化及 USB 重新枚举）、DDR 上传 1 ms、验证 18 ms、GO ACK 0 ms，总计 4968 ms。未单独测量设备初始化或 VMware 枚举；99.1% 是综合就绪时间。
 
-## Experimental no-re-enumeration DMA handoff
-New rom_usb_handoff.bin and --handoff-test intentionally keep the original USB address and host libusb handle, no reset, no SET_CONFIGURATION after stage1, no product or status query after handoff. DWC OTG 2.81a buffer DMA remains enabled; EP2 must already be inactive, active-type bulk/512-byte HS, and not stalled. Assert global OUT NAK and wait for AHB idle; redirect inherited EP0 DMA pointers into owned aligned 512-byte SRAM scratch, verify readback, abort on unexpected setup/reset/DMA error. This is a controlled EP2-only experiment, not a general USB stack: EP0 SETUP may bypass NAK; no other host traffic allowed. Writes to active EP0 DMA registers may be ignored or undefined on this revision; readback is a precaution, not proof of safety. A hardware fault or failure requires cold reset. Original SRAM/DDR checks retained; use two separate fixed DMA packets (512 then 37 bytes) with no DATA0/DATA1 reset command, verify exact length, contents and DDR copy at 0x24000000. No arbitrary code execution or NAND/SD writes. DMA/endpoint register layout reference https://codebrowser.dev/linux/linux/drivers/usb/dwc2/hw.h.html ; global OUT NAK/endpoint disable reference https://cos.googlesource.com/third_party/kernel/+/7666206b23e339344a2974d8af2b7fce882288f5/drivers/usb/dwc2/gadget.c . These sources do not establish that live ROM takeover is supported.
+## 不重新枚举的 DMA 接管实验
+
+新 rom_usb_handoff.bin 与 --handoff-test 有意保留原 USB 地址及主机 libusb 句柄；stage1 后不复位、不 SET_CONFIGURATION、不查询产品或状态。DWC OTG 2.81a buffer DMA 保持启用，EP2 必须未启用传输、类型 bulk/HS 512 字节且非 STALL。设置全局 OUT NAK，等待 AHB 空闲；将继承 EP0 DMA 指针转向自身对齐的 512 字节 SRAM 缓冲区，读回验证；遇意外 SETUP、复位、DMA 错误停止。这是受控 EP2 实验，不是通用 USB 栈：EP0 SETUP 可能绕过 NAK；禁止其他主机流量。写入活动 EP0 DMA 寄存器在此版本可能被忽略或行为未定义，读回仅为预防，不能证明安全。硬件故障或失败需冷复位。保留 SRAM/DDR 检查；使用两个独立固定 DMA 包（512、37 字节），不发送 DATA0/DATA1 重置命令，验证长度、内容及 0x24000000 的 DDR 副本。无任意代码执行或 NAND/SD 写入。DMA/端点寄存器参考 https://codebrowser.dev/linux/linux/drivers/usb/dwc2/hw.h.html ；全局 OUT NAK/端点关闭参考 https://cos.googlesource.com/third_party/kernel/+/7666206b23e339344a2974d8af2b7fce882288f5/drivers/usb/dwc2/gadget.c 。这些资料不能证明活动 ROM 接管受支持。
 
     git pull
     sh boot/build.sh
     cmake --build build-host
-    # cold ROM, single board, UART monitor open, no lsusb -v/other USB tools
+    # 冷 ROM，单板，打开 UART，不使用 lsusb -v 或其他 USB 工具
     sudo ./build-host/tq210-dnw --handoff-test out/rom_usb_handoff.bin
 
-Wait for exact HANDOFF EP2 READY on UART, then type READY in host terminal. If no READY, type anything else or Ctrl-C and cold reset. Do not send more data. Expected HANDOFF SAME CONNECTION PASS on UART plus two same-handle transfers on host. No automatic fallback or retry. This first experiment intentionally uses a manual readiness gate to prevent sending data to the ROM if takeover failed; it cannot yet measure automatic total boot latency. Keep original rom_usb_fast.bin. Source not cross-compiled/target-tested in this commit.
+旧版实验需要等待 UART 确切的 HANDOFF EP2 READY，再在主机输入 READY。未就绪时输入其他内容或 Ctrl-C 并冷复位；不再发送数据。预期 UART HANDOFF SAME CONNECTION PASS 及主机两个同句柄传输。无自动回退或重试。初次采用手动就绪门槛以避免接管失败时向 ROM 发送数据，无法测量自动总耗时。保留原 rom_usb_fast.bin。此提交当时未交叉编译或实机验证。
 
+## 自动同句柄就绪实验
 
-## Automatic same-handle readiness experiment
-User saw HANDOFF EP2 READY on UART with the initial manual variant; no confirmed packets yet. Replace manual stdin READY with a read-only Bulk IN 0x81 readiness message on the existing USB handle. Before sending stage1, host checks active ROM configuration advertises HS Bulk IN 0x81 and OUT 0x02 on the same interface. Device additionally checks inherited EP1 active bulk configuration, idle and MPS=512, preserves TX FIFO selection and data PID, supplies aligned owned SRAM DMA buffer and one 16-byte IN transfer. After EP2 is armed, send OB-HANDOFF-RDY1!; only exact received marker permits host to send 512 and 37-byte test packets. After DDR content verification device returns OB-HANDOFF-OK01!; host prints HANDOFF DDR VERIFY PASS only if exact marker received. Host IN requests have 5-second timeout; no automatic retry, no EP0 requests after stage1, no re-enumeration, no execution. Earlier EP0 DMA guard caveats still apply; IN hardware behavior has not been tested. UART remains diagnostic only. Rebuild host and firmware together; same command --handoff-test out/rom_usb_handoff.bin, no input required. If error occurs, capture host and UART logs and cold power cycle. Source not cross-compiled or hardware-tested in this revision.
+用户在初始手动版 UART 看到 HANDOFF EP2 READY，尚未确认包传输。改用同一 USB 句柄上的只读 Bulk IN 0x81 就绪消息取代 stdin READY。stage1 前主机检查 ROM 活动配置在同接口声明 HS Bulk IN 0x81 和 OUT 0x02。设备额外检查继承 EP1 活动 bulk 配置、空闲及 MPS=512，保留 TX FIFO 选择与数据 PID，提供对齐的自有 SRAM DMA 缓冲和一次 16 字节 IN 传输。EP2 arm 后发 OB-HANDOFF-RDY1!；仅收到精确标记才允许主机发送 512 和 37 字节测试包。DDR 内容校验后返回 OB-HANDOFF-OK01!；只有收到精确标记主机才打印 HANDOFF DDR VERIFY PASS。IN 请求超时 5 秒；无自动重试、stage1 后无 EP0 请求、不重新枚举、不执行。EP0 DMA 保护限制仍适用，当时 IN 硬件行为尚未测试。UART 仅诊断。主机与固件一起重建，仍使用 --handoff-test out/rom_usb_handoff.bin，无需输入。错误时记录日志并冷启动。此修订当时未交叉编译或实机验证。
 
+## 同句柄双向 DMA 实机验证
 
-## Same-handle bidirectional DMA validated
-The 0ada083 firmware printed EP1 readiness/verification notice completion, EP2 packet lengths 512 and 37, EP2 control alternating 0x000A8200 and 0x000B8200, and HANDOFF SAME CONNECTION PASS: 549 bytes, DMA + DDR readback. This establishes a working controlled same-connection transfer in both directions, without a USB reset/re-enumeration. No total timing reported for this run.
+0ada083 固件打印 EP1 就绪/校验通知完成、EP2 包长 512 和 37、EP2 控制在 0x000A8200 和 0x000B8200 间交替，并输出 HANDOFF SAME CONNECTION PASS: 549 bytes, DMA + DDR readback。证明受控同连接双向传输工作，无 USB 复位或重新枚举。未报告此次总耗时。
 
-## Experimental continuous direct-to-DDR DMA boot
-New rom_usb_dma_boot.bin retains the verified handoff guard and EP1 notification path. Protocol OBL2: 16-byte header (magic 0x324c424f, length, CRC32, executable flag), fixed DDR base 0x24000000, maximum 16 MiB. Header is a separate short OUT transfer, then EP2 receives directly into DDR in windows up to 65536 bytes / 128 packets. Final DMA capacity is rounded to 512 bytes within the reserved region, and actual length is checked against residual. Each transfer is armed only after the preceding DMA finishes. Readback CRC32 uses a 16-entry nibble table. EP1 sends exact readiness, header acceptance, verify and GO acknowledgment tokens. Executable images require a separate exact GO packet and a second CRC before GO ACK. Disconnect, disable DMA after AHB idle, invalidate I-cache/branch predictor, enter ARM image at 0x24000000. Same inherited SVC stack/VBAR ABI as earlier, no Linux boot ABI. No NAND/SD writes. Data-only test does not execute. Both host and firmware must be updated; original rom_usb_handoff.bin and rom_usb_fast.bin retained. Inherited EP0 guard limitations remain; controlled host only, no other USB queries.
+## 实验性连续直接 DDR DMA 启动
+
+rom_usb_dma_boot.bin 保留已验证接管保护及 EP1 通知路径。OBL2 协议：16 字节包头（magic 0x324c424f、长度、CRC32、可执行标志），DDR 基址固定 0x24000000，最大 16 MiB。包头单独短 OUT，随后 EP2 直接 DMA 到 DDR，每窗口至多 65536 字节/128 包。最终 DMA 容量在保留区内向上对齐 512 字节，并按剩余量检查实际长度。上一 DMA 完成后才 arm 下一次。读回 CRC32 用 16 项半字节表。EP1 发送精确就绪、包头接受、校验、GO 应答标记。可执行镜像需单独精确 GO 包，并在 GO ACK 前二次 CRC。断开连接，AHB 空闲后关闭 DMA，使 I-cache/分支预测失效，进入 0x24000000 ARM 镜像。继承早期 SVC 栈/VBAR ABI，不实现 Linux ABI。不写 NAND/SD；纯数据测试不执行。主机及固件须一起更新，保留 rom_usb_handoff.bin 和 rom_usb_fast.bin。继承 EP0 保护限制仍存在，仅受控主机，不允许其他 USB 查询。
 
     git pull
     sh boot/build.sh
     cmake --build build-host
-    # separate cold boots for each command
+    # 每条命令单独冷启动
     sudo ./build-host/tq210-dnw --dma-boot out/rom_usb_dma_boot.bin out/ddr_app.bin
     sudo ./build-host/tq210-dnw --dma-test out/rom_usb_dma_boot.bin
 
-Expected boot UART DDR APP EXEC PASS; data-only test 1048589 bytes CRC32 0x6eefefc7, no execution. Host timing ends at GO ACK, not actual application execution. No measured direct-DDR throughput yet; new multi-packet DMA mode, CRC and launch path are uncompiled and untested in this revision. Fail closed on unexpected state; cold reboot before retry.
+预期启动 UART DDR APP EXEC PASS；纯数据测试 1048589 字节，CRC32 0x6eefefc7，不执行。主机计时截止于 GO ACK，不代表实际应用执行。此修订当时无直接 DDR 吞吐实测，新多包 DMA、CRC 与启动路径未编译或实机验证。异常状态停止，重试前冷启动。
 
+## 直接 DDR DMA 启动与 1 MiB 测量
 
-## Direct-to-DDR DMA boot and 1 MiB test measured
-User's 30a40e9 run: 188-byte image CRC32 0x9bb258bc, same-handle readiness 153 ms, upload 1 ms, verify 10 ms, GO + second CRC 4 ms, total through GO ACK 197 ms (previous re-enumeration path 4968 ms). Actual UART execution line not supplied for this run. Data-only 1048589-byte image CRC32 0x6eefefc7: upload 51 ms (~19.61 MiB/s), verify/status 813 ms (~1.23 MiB/s), total 1046 ms. Both device verification markers accepted. Reboot into ROM between commands; first attempt without reconnect could not access 04e8:1234.
+用户 30a40e9 测试：188 字节镜像 CRC32 0x9bb258bc，同句柄就绪 153 ms，上传 1 ms，验证 10 ms，GO 与二次 CRC 4 ms，总计至 GO ACK 197 ms（此前重新枚举路径 4968 ms）。该次未提供 UART 执行行。纯数据 1048589 字节 CRC32 0x6eefefc7：上传 51 ms（约 19.61 MiB/s），验证/状态 813 ms（约 1.23 MiB/s），总计 1046 ms。两次设备验证标记均被接受。命令之间重启进入 ROM；首次未重连的尝试无法访问 04e8:1234。
 
-## Optional faster DDR CRC
-rom_usb_dma_fast.bin keeps the existing OBL2 wire protocol, DMA windows and double verification. Generates 256-entry CRC32 table in iRAM (1024 bytes extra BSS) and checks 123456789 -> 0xcbf43926 on target. Reads aligned little-endian DDR words instead of four byte loads, four table steps per word; handles 0..3 tail bytes without overread. USB state checked per 4KiB and after tail. No MMU/cache configuration or clock change. Host verification/GO timeouts increased to 30 s for large images; readiness timeout remains 5 s. Host prints approximate payload and verify/status MiB/s. Original nibble-table rom_usb_dma_boot.bin retained for A/B test. Algorithm equivalent JS reference verified against bitwise CRC on 21 lengths including 1 MiB+13 and known vectors (this is not a C/ARM build or hardware test). New firmware has not been cross-compiled; check iRAM linker assertion and vendor frame size. No measured new speedup yet.
+## 可选更快的 DDR CRC
+
+rom_usb_dma_fast.bin 保留 OBL2 协议、DMA 窗口及双重校验。在 iRAM 生成 256 项 CRC32 表（增加 1024 字节 BSS），目标板自检 123456789 -> 0xcbf43926。以对齐小端 DDR 字读取代替四次字节读取，每字四次查表；处理 0..3 尾字节，不越界。每 4KiB 及尾部后检查 USB 状态。不修改 MMU/cache 或时钟。主机验证/GO 超时增至 30s，就绪仍 5s。主机输出近似有效数据及验证/状态 MiB/s。保留原半字节表 rom_usb_dma_boot.bin 用于 A/B。JS 等价参考算法已与逐位 CRC 在 21 种长度（含 1 MiB+13）及已知向量对比通过，不是 C/ARM 编译或实机测试。此版本初次提交时未交叉编译，需检查 iRAM 链接断言及原厂帧大小，尚无实测速升。
 
     git pull
     sh boot/build.sh
     cmake --build build-host
-    # cold boot to ROM each time
+    # 每次冷启动进入 ROM
     sudo ./build-host/tq210-dnw --dma-test out/rom_usb_dma_fast.bin
     sudo ./build-host/tq210-dnw --dma-boot out/rom_usb_dma_fast.bin out/ddr_app.bin
 
-Expected same CRC32, verify marker, and for executable test UART DDR APP EXEC PASS. Report TIME and RATE lines. No flash I/O.
+预期相同 CRC32、校验标记，以及可执行测试 UART DDR APP EXEC PASS。报告 TIME 和 RATE 行。不访问 Flash。
+
+## 模块化重构后的实机回归（2026-11-25）
+
+用户在 14a783f 修复后重新构建，rom_usb_dma_fast.bin 下载 188 字节独立镜像，CRC32 0x9bb258bc，打印 HANDOFF DDR EXEC ENTRY=0x24000000，随后独立 DDR APP EXEC PASS。纯数据测试 1048589 字节、CRC32 0x6eefefc7，stage1 20 ms、就绪 153 ms、上传 54 ms（18.35 MiB/s）、验证 628 ms（1.59 MiB/s），总计 867 ms。相比此前 1046 ms，整体耗时降低约 17%，但不是所有变体或环境的性能保证。主要 DMA 路径已验证，其余变体仍需回归。详见 [REFACTOR.md](REFACTOR.md)。
