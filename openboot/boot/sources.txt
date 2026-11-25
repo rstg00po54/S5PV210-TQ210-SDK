@@ -1,0 +1,10 @@
+boot/main.c
+soc/s5pv210/clock.c
+soc/s5pv210/watchdog.c
+drivers/uart/console.c
+drivers/ddr/ddr.c
+diagnostics/memory_test.c
+diagnostics/usb_probe.c
+drivers/usb/usb_enum.c
+drivers/usb/usb_handoff.c
+protocol/obl2.c

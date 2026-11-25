@@ -80,3 +80,8 @@ Both banks receive distinct 16 KiB patterns and their complements at 0x20010000 
 ## Local validation
 
 Cross-compiled using clang/LLD, ARM ELF entry and vector table alignment verified in disassembly; C++ host compiled with GNU C++ and linked libusb; packet selftest and dry runs passed. No physical USB transfer or DDR/UART execution tested here. Full stage2 USB device driver and downloader automation are future work, not included in v0.1.
+
+
+## Modular source layout
+
+See [REFACTOR.md](REFACTOR.md) for module layout, build commands and the regression checklist. Earlier validation documents refer to the historical source layout.
