@@ -12,5 +12,10 @@ void thread_exit(void) __attribute__((noreturn));
 
 struct irq_frame *task_on_irq(struct irq_frame *frame);
 int task_selftest(void);
+int task_live_active(void);
+int task_live_start(void);
+int task_live_stop(void);
+void task_live_info(void);
+int task_live_selftest(void);
 
 #endif

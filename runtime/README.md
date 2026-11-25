@@ -112,3 +112,7 @@ timer probe 仅在 MMU、D-Cache 已打开且 ROM 时钟配置匹配时运行，
 ## v0.4 C 线程创建、休眠、唤醒与退出
 
 v0.3 实机 11/11 通过记录见 [HW_VALIDATION_V03.md](HW_VALIDATION_V03.md)。v0.4 新增 [TASKS.md](TASKS.md)，autotest 扩展到 13 项；也可单独 tasktest。保留原有汇编 IRQ 入口及旧调度器回归测试，新增有界 C 线程生命周期实验。尚待构建及实机验证。
+
+## v0.5 常驻后台线程实验
+
+v0.4 实机 13/13 结果见 [HW_VALIDATION_V04.md](HW_VALIDATION_V04.md)。新增 [LIVE_TASKS.md](LIVE_TASKS.md)：tasks start / ps / tasks stop；安全版 autotest 扩展为 15 项，保留全部前序回归。常驻模式仅运行内置后台任务，不是通用进程系统。新增功能待编译和实机验证。

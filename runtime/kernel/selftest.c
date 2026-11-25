@@ -142,5 +142,14 @@ void runtime_autotest(void)
         return;
     }
 
+    if (run_stage("Continuous background task scheduling", task_live_selftest)) {
+        report(0);
+        return;
+    }
+    if (run_stage("Post-background DDR memory self-test", memory_selftest)) {
+        report(0);
+        return;
+    }
+
     report(failed == 0u);
 }

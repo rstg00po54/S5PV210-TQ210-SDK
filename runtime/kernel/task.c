@@ -29,6 +29,10 @@ static volatile unsigned enabled;
 static volatile unsigned current;
 static volatile unsigned fault;
 static unsigned sleeping_skips;
+/* 会话标志在异常返回 Shell 后仍保留，直至 Shell 回收栈。 */
+static unsigned live_session;
+static volatile uint32_t live_work[2];
+static unsigned live_delays[2] = {5u, 7u};
 
 static void irq_lock(void)
 {
@@ -179,7 +183,7 @@ struct irq_frame *task_on_irq(struct irq_frame *frame)
             ++live;
         }
     }
-    if (fault || timer_test_failed() || now >= TEST_LIMIT || !live) {
+    if (fault || timer_test_failed() || (!live_session && now >= TEST_LIMIT) || !live) {
         if (live || timer_test_failed()) {
             fault = 1;
         }
@@ -326,5 +330,172 @@ int task_selftest(void)
     console_reg("Free pages restored=", page_free_count());
     console_write(ok ? "TASK PASS: create, sleep, wake, exit, stack reclaim\r\n" :
                        "TASK FAIL: lifecycle, stack or allocation check\r\n");
+    return ok ? 0 : -1;
+}
+
+/* 常驻实验线程不使用串口或分配器，不在工作线程内释放栈。 */
+static void live_worker(void *arg)
+{
+    unsigned id = *(const unsigned *)arg;
+    for (;;) {
+        for (unsigned i = 0; i < 10000u; ++i) {
+            ++live_work[id];
+        }
+        if (thread_sleep(live_delays[id])) {
+            return;
+        }
+    }
+}
+
+int task_live_active(void)
+{
+    return live_session != 0u;
+}
+
+int task_live_start(void)
+{
+    static const unsigned ids[2] = {0u, 1u};
+    if (live_session || enabled || timer_running() ||
+        (cpu_sctlr() & 5u) != 5u) {
+        console_write("TASKS requires MMU/Cache ON and timer stopped\r\n");
+        return -1;
+    }
+    if (timer_probe()) {
+        return -1;
+    }
+    irq_lock();
+    current = 0;
+    fault = 0;
+    sleeping_skips = 0;
+    tasks[0].state = TASK_RUNNING;
+    tasks[0].dispatches = 0;
+    for (unsigned i = 0; i < 2u; ++i) {
+        live_work[i] = 0;
+        if (thread_create(live_worker, (void *)&ids[i]) != (int)(i + 1u)) {
+            (void)reap_all();
+            console_write("TASKS create FAIL\r\n");
+            return -1;
+        }
+    }
+    console_write("TASKS: starting background A/B; use ps or tasks stop\r\n");
+    live_session = 1;
+    enabled = 1;
+    if (timer_start()) {
+        enabled = 0;
+        live_session = 0;
+        (void)reap_all();
+        return -1;
+    }
+    return 0;
+}
+
+/* 只在很短的 IRQ 屏蔽区间中复制快照，打印时不关中断。 */
+void task_live_info(void)
+{
+    if (!live_session) {
+        console_write("No background tasks. Use tasks start.\r\n");
+        return;
+    }
+    struct snapshot {
+        unsigned state, dispatches, sleeps, wakes, work;
+        uintptr_t stack;
+    } rows[2];
+    uint32_t cpsr, now;
+    unsigned ok, shell_slices;
+    __asm__ volatile("mrs %0,cpsr" : "=r"(cpsr));
+    irq_lock();
+    now = timer_ticks();
+    ok = enabled && !fault && !timer_test_failed();
+    shell_slices = tasks[0].dispatches;
+    for (unsigned i = 0; i < 2u; ++i) {
+        const struct task *t = &tasks[i + 1u];
+        rows[i].state = t->state;
+        rows[i].dispatches = t->dispatches;
+        rows[i].sleeps = t->sleep_calls;
+        rows[i].wakes = t->wakes;
+        rows[i].work = live_work[i];
+        rows[i].stack = t->stack;
+    }
+    if (!(cpsr & (1u << 7))) {
+        irq_unlock();
+    }
+    static const char *const names[] = {
+        "UNUSED", "READY", "RUNNING", "SLEEP", "EXITED"
+    };
+    console_write(ok ? "Scheduler: RUNNING\r\n" :
+                       "Scheduler: STOPPED/FAULT; use tasks stop\r\n");
+    console_write("Ticks: ");
+    console_dec(now);
+    console_write("\r\nPID  NAME   STATE    SLICES   WORK   SLEEPS   WAKES   STACK\r\n");
+    console_write("0    shell  RUNNING  ");
+    console_dec(shell_slices);
+    console_write("\r\n");
+    for (unsigned i = 0; i < 2u; ++i) {
+        console_write(i ? "2    B      " : "1    A      ");
+        console_write(rows[i].state <= TASK_EXITED ?
+                      names[rows[i].state] : "INVALID");
+        console_write("  ");
+        console_dec(rows[i].dispatches);
+        console_write("  ");
+        console_dec(rows[i].work);
+        console_write("  ");
+        console_dec(rows[i].sleeps);
+        console_write("  ");
+        console_dec(rows[i].wakes);
+        console_write("  ");
+        console_hex((uint32_t)rows[i].stack);
+        console_write("\r\n");
+    }
+}
+
+/* Shell 是唯一可以停止会话及回收所有后台栈的线程。 */
+int task_live_stop(void)
+{
+    if (!live_session) {
+        console_write("No background tasks.\r\n");
+        return -1;
+    }
+    irq_lock();
+    enabled = 0;
+    int ok = !current && !fault && !timer_test_failed();
+    timer_stop();
+    for (unsigned i = 1; i < TASK_COUNT; ++i) {
+        if (tasks[i].stack &&
+            *(volatile uint32_t *)tasks[i].stack != STACK_GUARD) {
+            ok = 0;
+        }
+    }
+    if (reap_all()) {
+        ok = 0;
+    }
+    live_session = 0;
+    current = 0;
+    console_reg("Free pages=", page_free_count());
+    console_write(ok ? "TASKS STOP PASS\r\n" : "TASKS STOP FAIL\r\n");
+    return ok ? 0 : -1;
+}
+
+/* 对常驻模式进行有限回归；交互模式本身没有 48 tick 上限。 */
+int task_live_selftest(void)
+{
+    unsigned before = page_free_count();
+    if (task_live_start()) {
+        return -1;
+    }
+    unsigned budget = 100000000u;
+    while (enabled && timer_ticks() < 60u && --budget) {
+        __asm__ volatile("nop" ::: "memory");
+    }
+    irq_lock();
+    int ok = budget && enabled && !fault && timer_ticks() >= 60u &&
+             tasks[1].wakes >= 2u && tasks[2].wakes >= 2u &&
+             live_work[0] >= 30000u && live_work[1] >= 30000u &&
+             page_free_count() == before - 2u * STACK_PAGES;
+    task_live_info();
+    if (task_live_stop() || page_free_count() != before) {
+        ok = 0;
+    }
+    console_write(ok ? "LIVE TASK PASS: continuous scheduling beyond 48 ticks\r\n" :
+                       "LIVE TASK FAIL\r\n");
     return ok ? 0 : -1;
 }

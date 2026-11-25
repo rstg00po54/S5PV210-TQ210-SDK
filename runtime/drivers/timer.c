@@ -192,6 +192,7 @@ int timer_start(void)
     /* 独占 VIC：屏蔽继承的中断源，只允许 Timer1。 */
     vic_disable_all();
     ticks = 0;
+    irq_test_error = 0;
     /* 22 号输入对应 Timer1；设置向量槽及优先级。 */
     VIC(0, PRIORITY_MASK) = 0xffffu;
     VIC(0, VECTOR_SLOT + 22u*4u) = 22u;
@@ -320,14 +321,12 @@ void irq_dispatch(void)
         ++ticks;
         /* A bounded self-test masks its source before returning from
            the final IRQ; the foreground then completes normal stop. */
-        if (irq_test_limit) {
-            if (PWM(TINT_CSTAT) & T1_PENDING) {
-                irq_test_error = 1;
-            }
-            if (irq_test_error || ticks >= irq_test_limit) {
-                VIC(0, INT_CLEAR) = T1_IRQ;
-                stop_hw();
-            }
+        if (PWM(TINT_CSTAT) & T1_PENDING) {
+            irq_test_error = 1;
+        }
+        if (irq_test_error || (irq_test_limit && ticks >= irq_test_limit)) {
+            VIC(0, INT_CLEAR) = T1_IRQ;
+            stop_hw();
         }
         VIC(0, VECTOR_ADDR) = 0u;
         dsb();

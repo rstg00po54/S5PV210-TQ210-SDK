@@ -43,12 +43,24 @@ static void help(void)
                   "irqtest    Run bounded Timer1 IRQ self-test\r\n"
                   "schedtest  Test preemptive thread context switching\r\n"
                   "tasktest   Test C thread create/sleep/exit/reclaim\r\n"
+                  "tasks start Run background A/B threads\r\n"
+                  "ps         Show background task status\r\n"
+                  "tasks stop Stop and reclaim background threads\r\n"
                   "autotest   Run MMU/cache/DDR/IRQ/scheduler tests\r\n"
                   "halt       Stop; cold power-cycle to restart\r\n");
 }
 static void execute(char *line)
 {
     if (!*line) {
+        return;
+    }
+    /* 常驻任务实验期间只开放只读命令及停止操作，避免 Timer/分配器冲突。 */
+    if (task_live_active() &&
+        !equal(line, "help") && !equal(line, "ps") &&
+        !equal(line, "tasks stop") && !equal(line, "ticks") &&
+        !equal(line, "meminfo") && !equal(line, "cpuinfo") &&
+        !equal(line, "mmu")) {
+        console_write("Background tasks active; use tasks stop first.\r\n");
         return;
     }
     if (equal(line, "help")) {
@@ -110,6 +122,12 @@ static void execute(char *line)
         scheduler_selftest();
     } else if (equal(line, "tasktest")) {
         task_selftest();
+    } else if (equal(line, "tasks start")) {
+        task_live_start();
+    } else if (equal(line, "ps")) {
+        task_live_info();
+    } else if (equal(line, "tasks stop")) {
+        task_live_stop();
     } else if (equal(line, "autotest")) {
         runtime_autotest();
     } else if (equal(line, "halt")) {
