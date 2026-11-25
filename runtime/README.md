@@ -116,3 +116,19 @@ v0.3 实机 11/11 通过记录见 [HW_VALIDATION_V03.md](HW_VALIDATION_V03.md)�
 ## v0.5 常驻后台线程实验
 
 v0.4 实机 13/13 结果见 [HW_VALIDATION_V04.md](HW_VALIDATION_V04.md)。新增 [LIVE_TASKS.md](LIVE_TASKS.md)：tasks start / ps / tasks stop；安全版 autotest 扩展为 15 项，保留全部前序回归。常驻模式仅运行内置后台任务，不是通用进程系统。新增功能待编译和实机验证。
+
+## NAND CE0 raw read diagnostics (experimental)
+
+Manual opt-in only; no NAND commands run at boot or during the existing runtime autotest. After loading runtime-safe.bin by the existing OBL2 USB path, stop any background tasks/timer, then run:
+
+    nand regs
+    nand autotest
+    nand info
+    nand status
+    nand read 0
+    nand oob 0
+    nand scan 64
+
+The driver only issues RESET, READ ID, STATUS, and READ PAGE. It enables NFCON clock, selects CE0, sets conservative timings, and maps 0xb0e00000 strongly ordered/XN. No program/erase operations, no ECC, no partition assumptions. Unknown IDs/geometries are blocked from page reads. Diagnostic range is limited to the first 512 MiB on CE0, not an assertion of actual total capacity. Scan reports candidate OOB markers only; cannot establish factory bad blocks until exact chip and OOB layout are confirmed. Repeated raw page reads do not prove content integrity. No benchmark yet. Physical pinmux, timing, ID, and all NAND functions require hardware validation. If a timeout or fault occurs, capture UART and cold restart. Original runtime autotest remains independent. No changes to OpenBoot.
+
+References: https://www.eepw.com.cn/article/201611/322805.htm ; Linux drivers/clk/samsung/clk-s5pv210.c (NFCON clock gate).

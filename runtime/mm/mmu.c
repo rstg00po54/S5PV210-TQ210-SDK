@@ -65,6 +65,7 @@ int mmu_enable(void)
         map_section(a, SEC_NORMAL | (a == IMAGE_BASE ? 0u : SEC_XN));
     }
     /* Strongly ordered, XN, privileged-only MMIO. Everything else faults. */
+    map_section(0xb0e00000u, SEC_XN); /* NAND controller */
     map_section(0xe0100000u, SEC_XN);
     map_section(0xe0200000u, SEC_XN);
     map_section(0xe2500000u, SEC_XN); /* PWM timer */

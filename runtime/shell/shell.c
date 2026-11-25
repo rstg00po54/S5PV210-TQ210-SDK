@@ -3,6 +3,7 @@
 #include "selftest.h"
 #include "scheduler.h"
 #include "task.h"
+#include "nand.h"
 
 static uintptr_t held;
 static unsigned held_pages;
@@ -47,6 +48,9 @@ static void help(void)
                   "ps         Show background task status\r\n"
                   "tasks stop Stop and reclaim background threads\r\n"
                   "autotest   Run MMU/cache/DDR/IRQ/scheduler tests\r\n"
+                  "nand init/id/info/status/regs  Raw NAND diagnostics\r\n"
+                  "nand read PAGE / nand oob PAGE / nand scan [N]\r\n"
+                  "nand autotest  Non-destructive NAND test\r\n"
                   "halt       Stop; cold power-cycle to restart\r\n");
 }
 static void execute(char *line)
@@ -130,6 +134,9 @@ static void execute(char *line)
         task_live_stop();
     } else if (equal(line, "autotest")) {
         runtime_autotest();
+    } else if (line[0] == 'n' && line[1] == 'a' && line[2] == 'n' &&
+               line[3] == 'd' && line[4] == ' ') {
+        (void)nand_command(line + 5);
     } else if (equal(line, "halt")) {
         console_write("Halted. Cold power-cycle to restart.\r\n");
         runtime_halt();
