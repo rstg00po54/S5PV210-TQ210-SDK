@@ -10,7 +10,7 @@ import struct
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BL2 = ROOT / "Linux平台工具/opt/EmbedSky/TQBoardDNW for linux/V210_USB.BL2.bin"
+BL2 = ROOT / "linux-tools/opt/EmbedSky/TQBoardDNW for linux/V210_USB.BL2.bin"
 
 def chunks(data, addr, checksum):
     yield struct.pack("<II", addr, len(data) + 10) + data[:2040]

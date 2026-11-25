@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-vendor="$root/Linux平台工具/opt/EmbedSky/TQBoardDNW for linux"
+vendor="$root/linux-tools/opt/EmbedSky/TQBoardDNW for linux"
 out="${1:-$root/research/out}"
 mkdir -p "$out"
 exe="$vendor/TQBoardDNW_64"
