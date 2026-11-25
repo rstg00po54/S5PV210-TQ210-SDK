@@ -77,11 +77,12 @@ static uint32_t crc32(const Bytes& b){
 static uint32_t get32(const uint8_t* p){return uint32_t(p[0])|(uint32_t(p[1])<<8)|(uint32_t(p[2])<<16)|(uint32_t(p[3])<<24);}
 static Bytes bulk_status(libusb_device_handle* h){
     Bytes status(20);
-    int n=libusb_control_transfer(h,0xc0,0x5a,0x4f42,0x4c31,status.data(),20,3000);
+    int n=libusb_control_transfer(h,0xc0,0x5a,0x4f42,0x4c31,status.data(),20,30000);
     check(n,"OpenBoot protocol status");if(n!=20||get32(status.data())!=0x314c424fu)throw std::runtime_error("not OpenBoot bulk protocol; nothing sent");
     return status;
 }
-static void bulk_test(){
+static void bulk_send(const Bytes& payload,bool executable){
+    if(payload.empty()||payload.size()>0x01000000u||(executable&&(payload.size()<4u||(payload.size()&3u))))throw std::runtime_error("invalid DDR image length (ARM image must be 4-byte aligned; max 16 MiB)");
     const Bytes check_vector{'1','2','3','4','5','6','7','8','9'};
     if(crc32(check_vector)!=0xcbf43926u)throw std::runtime_error("CRC32 selftest");
     Usb u;check(libusb_init(&u.c),"libusb_init");
@@ -89,20 +90,17 @@ static void bulk_test(){
     if(!u.h)throw std::runtime_error("attach OpenBoot Bulk Test to Ubuntu");
     libusb_device_descriptor dd{};
     check(libusb_get_device_descriptor(libusb_get_device(u.h),&dd),"device descriptor");
-    if(dd.bcdDevice!=2||!dd.iProduct)throw std::runtime_error("wrong device revision; do not send to iROM");
+    if((dd.bcdDevice!=2&&dd.bcdDevice!=3)||!dd.iProduct||(executable&&dd.bcdDevice!=3))throw std::runtime_error("wrong device revision; do not send to iROM or non-executable receiver");
     unsigned char name[128]{};
     int n=libusb_get_string_descriptor_ascii(u.h,dd.iProduct,name,sizeof(name));
-    check(n,"product string");if(std::string(reinterpret_cast<char*>(name),size_t(n))!="TQ210 Bulk Test")throw std::runtime_error("wrong product; nothing sent");
+    check(n,"product string");const std::string expected=dd.bcdDevice==3?"TQ210 Exec Test":"TQ210 Bulk Test";if(std::string(reinterpret_cast<char*>(name),size_t(n))!=expected)throw std::runtime_error("wrong product; nothing sent");
     int cfg=0;check(libusb_get_configuration(u.h,&cfg),"get configuration");
     if(cfg!=1)throw std::runtime_error("configuration 1 not active; attach device again");
     auto status=bulk_status(u.h);
     if(get32(status.data()+4)!=0||get32(status.data()+8)!=0)throw std::runtime_error("receiver not fresh; cold reboot before retry");
     check(libusb_claim_interface(u.h,0),"claim interface");u.iface=0;
-    Bytes payload((1u<<20)+13u);
-    uint32_t seed=0x21012345u;
-    for(auto& x:payload){seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;x=uint8_t(seed);}
     uint32_t crc=crc32(payload);
-    Bytes wire;append32(wire,0x314c424fu);append32(wire,uint32_t(payload.size()));append32(wire,crc);append32(wire,0);
+    Bytes wire;append32(wire,0x314c424fu);append32(wire,uint32_t(payload.size()));append32(wire,crc);append32(wire,executable?1u:0u);
     wire.insert(wire.end(),payload.begin(),payload.end());
     std::printf("OpenBoot EP2 test: %zu payload bytes CRC32=%08x\n",payload.size(),unsigned(crc));
     for(size_t i=0;i<wire.size();){
@@ -117,18 +115,37 @@ static void bulk_test(){
         if(state==3)throw std::runtime_error("device reported DDR verify failure");
         if(state==2){
             if(got!=payload.size()||len!=payload.size()||actual!=crc)throw std::runtime_error("verification result mismatch");
-            std::printf("BULK DDR VERIFY PASS: %u bytes CRC32=%08x\n",unsigned(got),unsigned(actual));return;
+            std::printf("BULK DDR VERIFY PASS: %u bytes CRC32=%08x\n",unsigned(got),unsigned(actual));
+            if(executable)std::cout<<"DDR image at 0x24000000; send lowercase x on UART to execute (not executed yet).\n";
+            return;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     throw std::runtime_error("device verification did not complete");
 }
 
+static void bulk_test(){
+    Bytes payload((1u<<20)+13u);
+    uint32_t seed=0x21012345u;
+    for(auto& x:payload){seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;x=uint8_t(seed);}
+    bulk_send(payload,false);
+}
+static void bulk_load(const char* path){
+    std::ifstream f(path,std::ios::binary|std::ios::ate);
+    if(!f)throw std::runtime_error("cannot open DDR image");
+    const auto size=f.tellg();
+    if(size<4||size>0x01000000)throw std::runtime_error("invalid DDR image size");
+    Bytes payload(static_cast<size_t>(size));
+    f.seekg(0);
+    if(!f.read(reinterpret_cast<char*>(payload.data()),static_cast<std::streamsize>(size)))throw std::runtime_error("cannot read DDR image");
+    bulk_send(payload,true);
+}
 int main(int argc,char** argv){try{
+    if(argc==3&&std::string(argv[1])=="--load"){bulk_load(argv[2]);return 0;}
     if(argc==2&&std::string(argv[1])=="--bulk-test"){bulk_test();return 0;}
     bool dry=false,full=false,join=false,pad=false,reconfig=true;std::string path;
     for(int i=1;i<argc;i++){std::string a=argv[i];if(a=="--selftest"){selftest();return 0;}else if(a=="--dry-run")dry=true;else if(a=="--full-checksum")full=true;else if(a=="--join-tail")join=true;else if(a=="--pad-vendor-size")pad=true;else if(a=="--no-reconfigure")reconfig=false;else if(!a.empty()&&a[0]!='-'&&path.empty())path=a;else throw std::runtime_error("unknown argument: "+a);}
-    if(path.empty()){std::cout<<"Usage: tq210-dnw IMAGE [--dry-run] [--full-checksum] [--join-tail] [--pad-vendor-size] [--no-reconfigure]\n       tq210-dnw --selftest\n";return 1;}
+    if(path.empty()){std::cout<<"Usage: tq210-dnw IMAGE [--dry-run] [--full-checksum] [--join-tail] [--pad-vendor-size] [--no-reconfigure]\n       tq210-dnw --selftest\n       tq210-dnw --bulk-test\n       tq210-dnw --load DDR_IMAGE\n";return 1;}
     std::ifstream f(path,std::ios::binary);if(!f)throw std::runtime_error("cannot open image");Bytes b((std::istreambuf_iterator<char>(f)),{});if(b.empty()||b.size()>16368)throw std::runtime_error("invalid image length");
     if(pad){if(b.size()>11168)throw std::runtime_error("cannot pad to vendor size");b.resize(11168,0);}
     auto p=packets(b,0xd0020010,full,join);auto& t=p.back();unsigned sum=unsigned(t[t.size()-2])|(unsigned(t.back())<<8);

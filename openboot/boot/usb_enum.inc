@@ -46,7 +46,9 @@ static unsigned usb_setup_valid,usb_config,usb_phase;
 enum { USB_IDLE,USB_IN_DATA,USB_OUT_STATUS,USB_IN_STATUS };
 /* No endpoint other than EP0 advertised at this milestone. */
 static const uint8_t usb_device_desc[]={
-#ifdef USB_BULK_TEST
+#ifdef USB_EXEC_TEST
+    18,1,0,2,0,0,0,64,0xe8,0x04,0x34,0x12,0x03,0x00,1,2,0,1
+#elif defined(USB_BULK_TEST)
     18,1,0,2,0,0,0,64,0xe8,0x04,0x34,0x12,0x02,0x00,1,2,0,1
 #elif defined(USB_DNW_ID)
     18,1,0,2,0,0,0,64,0xe8,0x04,0x34,0x12,0x01,0x00,1,2,0,1
@@ -67,7 +69,9 @@ static const uint8_t usb_other_desc[]={9,7,18,0,1,1,0,0x80,50,9,4,0,0,0,0xff,0,0
 static const uint8_t usb_qualifier[]={10,6,0,2,0,0,0,64,1,0};
 static const uint8_t usb_lang[]={4,3,9,4};
 static const uint8_t usb_manufacturer[]={18,3,'O',0,'p',0,'e',0,'n',0,'B',0,'o',0,'o',0,'t',0};
-#ifdef USB_BULK_TEST
+#ifdef USB_EXEC_TEST
+static const uint8_t usb_product[]={32,3,'T',0,'Q',0,'2',0,'1',0,'0',0,' ',0,'E',0,'x',0,'e',0,'c',0,' ',0,'T',0,'e',0,'s',0,'t',0};
+#elif defined(USB_BULK_TEST)
 static const uint8_t usb_product[]={32,3,'T',0,'Q',0,'2',0,'1',0,'0',0,' ',0,'B',0,'u',0,'l',0,'k',0,' ',0,'T',0,'e',0,'s',0,'t',0};
 #else
 static const uint8_t usb_product[]={24,3,'T',0,'Q',0,'2',0,'1',0,'0',0,' ',0,'O',0,'T',0,'G',0,' ',0,'1',0};
@@ -90,10 +94,19 @@ enum { BULK_READY,BULK_RX,BULK_PASS,BULK_FAIL };
 static uint8_t bulk_header[16];
 static unsigned bulk_hdr,bulk_state,bulk_enabled,bulk_pending_config;
 static uint32_t bulk_len,bulk_count,bulk_expected_crc,bulk_actual_crc;
+#ifdef USB_EXEC_TEST
+static uint32_t bulk_flags;
+#define BULK_ALLOWED_FLAGS 1u
+#else
+#define BULK_ALLOWED_FLAGS 0u
+#endif
 static unsigned bulk_mps(void){return ((UREG(DSTS)>>1)&3u)==0u?512u:64u;}
 static void bulk_reset(void){
     bulk_hdr=0;bulk_state=BULK_READY;bulk_enabled=0;bulk_pending_config=0;
     bulk_len=0;bulk_count=0;bulk_expected_crc=0;bulk_actual_crc=0;
+#ifdef USB_EXEC_TEST
+    bulk_flags=0;
+#endif
 }
 static uint32_t bulk_get32(const uint8_t *p){
     return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
@@ -135,10 +148,15 @@ static void bulk_byte(uint8_t v){
         if(bulk_hdr==16u){
             bulk_len=bulk_get32(bulk_header+4);
             bulk_expected_crc=bulk_get32(bulk_header+8);
+            uint32_t flags=bulk_get32(bulk_header+12);
             if(bulk_get32(bulk_header)!=BULK_MAGIC||!bulk_len||
-               bulk_len>BULK_LIMIT||bulk_get32(bulk_header+12)){
+               bulk_len>BULK_LIMIT||(flags&~BULK_ALLOWED_FLAGS)||
+               ((flags&1u)&&(bulk_len<4u||(bulk_len&3u)))){
                 bulk_fail();return;
             }
+#ifdef USB_EXEC_TEST
+            bulk_flags=flags;
+#endif
             bulk_state=BULK_RX;
             reg("BULK EXPECTED BYTES=",bulk_len);
         }
@@ -160,7 +178,36 @@ static void bulk_verify(void){
     reg("BULK DDR CRC32=",bulk_actual_crc);
     bulk_state=bulk_actual_crc==bulk_expected_crc?BULK_PASS:BULK_FAIL;
     out(bulk_state==BULK_PASS?"BULK DDR VERIFY PASS; no execution\r\n":"BULK DDR VERIFY FAIL\r\n");
+#ifdef USB_EXEC_TEST
+    if(bulk_state==BULK_PASS&&(bulk_flags&1u))
+        out("DDR IMAGE READY; after host verification send x to execute\r\n");
+#endif
 }
+#ifdef USB_EXEC_TEST
+static void bulk_execute(void){
+    uint32_t ctl;
+    __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(ctl));
+    if(!usb_config||bulk_state!=BULK_PASS||!(bulk_flags&1u)||
+       bulk_count!=bulk_len||(ctl&5u)||(UREG(GAHBCFG)&UBIT(5))){
+        out("EXEC BLOCKED: no verified executable image or unsafe CPU/USB state\r\n");return;
+    }
+    /* Re-read DDR immediately before execution. No new payload is accepted. */
+    bulk_verify();
+    if(bulk_state!=BULK_PASS)return;
+    out("DDR EXEC ENTRY=0x24000000; USB disconnect\r\n");
+    UW(GINTMSK,0);
+    UW(DCTL,UREG(DCTL)|SOFT_DISCONNECT);
+    (void)wait_mask(UART+0x10,4,4);
+    uint32_t zero=0;
+    __asm__ volatile("cpsid if; dsb sy; mcr p15,0,%0,c7,c5,0; mcr p15,0,%0,c7,c5,6; dsb sy; isb"::"r"(zero):"memory");
+    /* ARM-state entry, inherited SVC/iRAM stack and VBAR. The payload must
+       establish its own stack/vectors/runtime as needed. No Linux boot ABI. */
+    void (*entry)(void)=(void (*)(void))(uintptr_t)BULK_BASE;
+    entry();
+    out("DDR APP RETURNED; stopping\r\n");
+    stop();
+}
+#endif
 static void bulk_rx_packet(unsigned n){
     /* DWC2 slave mode uses the shared RX FIFO, including for OUT EP2. */
     if(!bulk_enabled||n>bulk_mps())bulk_fail();
@@ -383,7 +430,10 @@ static int usb_start(void) {
     usb_phase=USB_IDLE;usb_config=0;usb_setup_valid=0;
     UW(DIEPCTL0,ACTIVE|SNAK);usb_arm_setup();
     UW(GINTMSK,USB_RESET|USB_ENUM|RX_LEVEL|UBIT(18)|UBIT(19));
-#ifdef USB_BULK_TEST
+#ifdef USB_EXEC_TEST
+    bulk_reset();
+    out("USB RECONNECT: 04e8:1234 OpenBoot Exec Test EP2\r\n");
+#elif defined(USB_BULK_TEST)
     bulk_reset();
     out("USB RECONNECT: 04e8:1234 OpenBoot Bulk Test EP2\r\n");
 #elif defined(USB_DNW_ID)
@@ -427,6 +477,9 @@ static void usb_enum_test(void) {
         /* UART escape; cold reboot needed to recover the original ROM USB. */
         if(R(UART+0x10)&1u){
             unsigned ch=B(UART+0x24);
+#ifdef USB_EXEC_TEST
+            if(ch=='x')bulk_execute();
+#endif
             if(ch=='q'){
                 UW(DCTL,UREG(DCTL)|SOFT_DISCONNECT);
                 out("USB TEST STOPPED; cold reboot to restore iROM\r\n");return;

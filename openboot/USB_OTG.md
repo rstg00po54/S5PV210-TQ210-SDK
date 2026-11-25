@@ -71,3 +71,22 @@ Send e; attach TQ210 Bulk Test to Ubuntu. Confirm EP2 BULK OUT READY MPS=0x00000
     sudo ./build-host/tq210-dnw --bulk-test
 
 Expected BULK DDR VERIFY PASS on both host and UART, same CRC32. Stop on any error, cold power-cycle, and capture logs. No second upload to an already-used receiver; no execution or flash write. Newly written source, not cross-compiled or board-tested in this submission. Driver timing, endpoint interrupts and FS transfer remain experimental.
+
+
+## EP2 bulk data transport validated
+User's rom_usb_bulk.bin plus native --bulk-test transferred 1,048,589 payload bytes (+16 header), all 1,048,605 wire bytes. Host and DDR readback CRC32 both 0x6eefefc7. Last short packet accepted. No timing data was provided; HS link rate is not measured throughput.
+
+## Experimental ARM DDR image loader
+rom_usb_exec.bin adds the executable flag (header word 3 = 1), product TQ210 Exec Test, bcdDevice=3. Preserves fixed 0x24000000 destination, max 16 MiB, requires 4-byte-aligned length for executable images; the previous bulk firmware accepts only flag 0. New --load FILE checks identity and protocol, transfers the image, and verifies status/CRC, but never starts it automatically. Only lowercase x on UART, after host verification, allows execution of a verified flag-1 image; ordinary --bulk-test data cannot execute. It checks MMU/D-cache off and USB DMA disabled, verifies DDR CRC again, disconnects USB, disables IRQ/FIQ, invalidates I-cache and branch predictor, then calls ARM entry 0x24000000. SVC mode, existing iRAM stack and VBAR inherited; payload is responsible for runtime, stack and exception vectors. Return stops in OpenBoot. No Linux boot protocol, relocation, ELF parsing or flash write. This is intended for trusted local bare-metal images, not authenticated boot.
+
+Build:
+    git pull
+    sh boot/build.sh
+    cmake --build build-host
+    # cold reboot to iROM USB mode
+    sudo ./build-host/tq210-dnw out/rom_usb_exec.bin --pad-vendor-size
+
+Send e in UART, attach new device to Ubuntu, wait for EP2 ready and OPENBOOT USB CONFIGURED:
+    sudo ./build-host/tq210-dnw --load out/ddr_app.bin
+
+After host BULK DDR VERIFY PASS, send lowercase x on UART. The independently linked stackless ARM test payload checks its entry address and prints "DDR APP EXEC PASS: independent ARM image at 0x24000000", then loops. Recover by cold power-cycle. Do not run --bulk-test before --load on the same receiver without reboot. Newly written source not cross-compiled or tested on target; original rom_usb_bulk.bin retained.
