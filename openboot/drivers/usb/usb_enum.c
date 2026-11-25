@@ -361,7 +361,7 @@ static int usb_reply(const uint8_t *data, unsigned n, unsigned requested, unsign
     UW(DIEPCTL0, ACTIVE | CNAK | EPENA);
     if (words)
     {
-        unsigned timeout = TIMEOUT;
+        unsigned timeout = MMIO_TIMEOUT;
         while ((UREG(GNPTXSTS)&0xffffu) < words && --timeout)
         {
         }
