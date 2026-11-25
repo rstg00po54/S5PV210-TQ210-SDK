@@ -217,6 +217,54 @@ static void map_probe(void) {
     else out("MAP SAMPLE PASS: no alias in sampled addresses; capacity/stress unconfirmed\r\n");
 }
 
+
+#ifdef DDR_FULL_TEST
+/* Destructive, explicitly requested standalone RAM test. Code, data and
+ * stack remain in iRAM. Never run with an OS or valuable DDR data present. */
+static uint32_t full_pattern(uint32_t addr, unsigned pass) {
+    uint32_t v=(addr>>2)^0x55aa33ccu;
+    return pass ? ~v : v;
+}
+static void full_ddr_test(void) {
+    uint32_t ctl;
+    __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(ctl));
+    if((ctl&5u)||R(0xf0000008u)!=0x20e01323u||R(0xf1400008u)!=0x40e01323u) {
+        out("FULL TEST BLOCKED: unexpected cache/MMU or DMC configuration\r\n");
+        return;
+    }
+    out("FULL DDR TEST: destructive, 0x20000000..0x5FFFFFFF\r\n");
+    uint32_t errors[2]={0,0};
+    for(unsigned pass=0;pass<2;pass++) {
+        reg("PASS NUMBER=",pass+1u);
+        /* Both banks must be completely written before either is verified. */
+        for(uint32_t block=0x20000000u;block<0x60000000u;block+=0x02000000u) {
+            reg("WRITE BLOCK=",block);
+            for(uint32_t a=block;a<block+0x02000000u;a+=4u)
+                R(a)=full_pattern(a,pass);
+            sync();
+        }
+        for(uint32_t block=0x20000000u;block<0x60000000u;block+=0x02000000u) {
+            reg("VERIFY BLOCK=",block);
+            for(uint32_t a=block;a<block+0x02000000u;a+=4u) {
+                uint32_t got=R(a),expected=full_pattern(a,pass);
+                if(got!=expected) {
+                    unsigned bank=a>=0x40000000u;
+                    if(errors[bank]<8u) {
+                        reg("FAIL AT=",a);reg("EXPECTED=",expected);reg("ACTUAL=",got);
+                    }
+                    errors[bank]++;
+                }
+            }
+        }
+        reg("DMC0 CUMULATIVE ERRORS=",errors[0]);
+        reg("DMC1 CUMULATIVE ERRORS=",errors[1]);
+    }
+    if(errors[0]||errors[1]) out("FULL DDR TEST FAIL\r\n");
+    else out("FULL DDR TEST PASS: 1024 MiB, two patterns, every 32-bit word\r\n");
+    out("DDR contents overwritten; iRAM console still running\r\n");
+}
+#endif
+
 #endif
 void boot_main(void) {
     wr(0xe2700000,0);
@@ -241,7 +289,18 @@ void boot_main(void) {
     if(!ddr_exec()) {out("DDR EXEC FAIL\r\n");stop();}
     out("[5] DDR EXEC PASS; back in SRAM\r\n");
     out("OpenBoot diagnostic complete. a=optional DMC0 alias probe, b=DMC1, m=dual-window map test.\r\n");
-    for(;;) if(R(UART+0x10)&1) {unsigned c=B(UART+0x24);if(c=='a')alias_probe(RAM0);if(c=='b')alias_probe(RAM1);if(c=='m')map_probe();}
+#ifdef DDR_FULL_TEST
+    out("Full memory test available: uppercase T destroys all DDR contents.\r\n");
+#endif
+    for(;;) if(R(UART+0x10)&1) {
+        unsigned c=B(UART+0x24);
+        if(c=='a')alias_probe(RAM0);
+        if(c=='b')alias_probe(RAM1);
+        if(c=='m')map_probe();
+#ifdef DDR_FULL_TEST
+        if(c=='T')full_ddr_test();
+#endif
+    }
 #endif
     stop();
 }
