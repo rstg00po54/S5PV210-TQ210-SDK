@@ -30,7 +30,7 @@ static inline void cpu_sync(void)
     __asm__ volatile("dsb sy; isb" ::: "memory");
 }
 
-static inline void boot_halt(void)
+static inline __attribute__((noreturn)) void boot_halt(void)
 {
     for (;;) {
         __asm__ volatile("nop");
@@ -57,6 +57,6 @@ void usb_enum_test(void);
 void usb_delay_iterations(uint32_t count);
 void usb_settle(void);
 void handoff_guard(void);
-void handoff_test(void);
+__attribute__((noreturn)) void handoff_test(void);
 
 #endif

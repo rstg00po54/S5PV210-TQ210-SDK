@@ -56,3 +56,10 @@ Reference baseline can be checked out separately:
 The source split, lexical formatting and preprocessor nesting were checked.
 No ARM/native build, CMake configure, or target regression was run in the
 current environment because the remote repository cannot be cloned into it.
+
+
+## Interface cleanup and build regression
+
+The DMA protocol uses driver operations for OUT NAK release, receive-length checks, and endpoint diagnostics; OTG register definitions are private to the handoff driver. The main entry has explicit control blocks and a separate diagnostic console. Linker section garbage collection reduces unused code after splitting the translation units; startup KEEP entries and the existing iRAM size assertion are retained. Binary layout/timing may change.
+
+Run `sh check-build.sh` for all firmware builds, C++ host build, host packet self-test and ROM frame size checks. The script does not access hardware. The new code and build script have not been compiled/executed in the current environment; hardware regression remains mandatory.

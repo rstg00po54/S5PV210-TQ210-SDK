@@ -7,7 +7,7 @@ file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sources.txt" SOURCES)
 list(TRANSFORM SOURCES PREPEND "${ROOT}/")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/variants.txt" VARIANTS)
 set(ARM_FLAGS -mcpu=cortex-a8 -marm -mfloat-abi=soft)
-set(C_FLAGS -Os -Wall -Wextra -Werror -ffreestanding -fno-builtin
+set(C_FLAGS -Os -ffunction-sections -fdata-sections -Wall -Wextra -Werror -ffreestanding -fno-builtin
     -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables)
 foreach(VARIANT IN LISTS VARIANTS)
     string(FIND "${VARIANT}" "|" SEP)
@@ -20,7 +20,7 @@ foreach(VARIANT IN LISTS VARIANTS)
     target_include_directories(${NAME} PRIVATE "${ROOT}/include")
     target_compile_options(${NAME} PRIVATE ${ARM_FLAGS} ${C_FLAGS} ${DEFINES})
     target_link_options(${NAME} PRIVATE ${ARM_FLAGS} -nostdlib
-        "-Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/iram.ld,-Map,${OUT}/${NAME}.map")
+        "-Wl,--gc-sections,-T,${CMAKE_CURRENT_SOURCE_DIR}/iram.ld,-Map,${OUT}/${NAME}.map")
     set_property(TARGET ${NAME} APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/iram.ld")
     add_custom_command(TARGET ${NAME} POST_BUILD
         COMMAND "${CMAKE_OBJCOPY}" -O binary "$<TARGET_FILE:${NAME}>" "${OUT}/${NAME}.bin"

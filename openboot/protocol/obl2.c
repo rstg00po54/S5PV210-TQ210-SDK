@@ -41,7 +41,7 @@ static uint32_t handoff_crc(uint32_t length)
        separately, never read beyond the received length. */
     uint32_t ctl;
     __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(ctl));
-    if (ctl&(5u|HB(25)))handoff_abort("unexpected CRC CPU state");
+    if (ctl&(5u|(1u << 25)))handoff_abort("unexpected CRC CPU state");
     handoff_crc_init();
     __asm__ volatile("dsb sy":::"memory");
     uint32_t crc = 0xffffffffu, offset = 0;
@@ -98,7 +98,7 @@ void handoff_test(void)
     __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(ctl));
     if (ctl&5u)handoff_abort("MMU / data cache enabled");
     handoff_arm();
-    HW(H_DCTL, HR(H_DCTL)|HB(10));
+    handoff_enable_out();
     handoff_notice("OB-DMA-BOOT-RDY!");
     handoff_wait_dma(512u, 16u);
     volatile uint8_t *header =(volatile uint8_t *)(uintptr_t)handoff_packet;
@@ -148,20 +148,15 @@ void handoff_test(void)
 #else
     handoff_check();
     handoff_arm();
-    HW(H_DCTL, HR(H_DCTL)|HB(10));
+    handoff_enable_out();
     console_write("HANDOFF EP2 READY; sending USB readiness marker\r\n");
     handoff_notice("OB-HANDOFF-RDY1!");
     for (unsigned packet = 0; packet<2; packet++)
     {
-        while (!(HR(H_DOEPINT2)&H_XFRC))handoff_check();
-        handoff_check();
-        if (!mmio_wait_mask(S5PV210_USB_OTG_BASE+H_GRSTCTL, HB(31), HB(31)))
-        handoff_abort("DMA completion AHB timeout");
-        unsigned remaining = HR(H_DOEPTSIZ2)&0x7ffffu;
-        if (remaining>512u)handoff_abort("invalid DMA residual");
-        unsigned actual = 512u-remaining, expected = packet ? 37u:512u;
+        unsigned actual = handoff_receive_length(512u);
+        unsigned expected = packet ? 37u : 512u;
         console_reg("HANDOFF PACKET BYTES=", actual);
-        console_reg("HANDOFF EP2 CTL AFTER=", HR(H_DOEPCTL2));
+        console_reg("HANDOFF EP2 CTL AFTER=", handoff_out_control());
         if (actual != expected)handoff_abort("packet length mismatch");
         volatile uint8_t *src =(volatile uint8_t *)(uintptr_t)handoff_packet;
         for (unsigned i = 0; i<actual; i++)
@@ -176,7 +171,7 @@ void handoff_test(void)
         handoff_abort("DDR readback mismatch");
         if (!packet)handoff_arm();
     }
-    HW(H_DOEPINT2, 0xffffffffu);
+    handoff_ack_out();
     console_write("HANDOFF SAME CONNECTION PASS: 549 bytes, DMA + DDR readback\r\n");
     handoff_notice("OB-HANDOFF-OK01!");
     console_write("No execution; cold power-cycle before next download\r\n");
