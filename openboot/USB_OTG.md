@@ -52,3 +52,22 @@ After DDR EXEC PASS, send lowercase e. Confirm UART announces "USB RECONNECT: lo
 The first DNW-ID variant reportedly stopped printing after USB SOFT DISCONNECT, before its reconnect message. That does not establish a VID/PID or Windows driver failure: no new descriptors have been sent yet. This update logs each takeover step and the pre-reset GAHBCFG/DCTL/GRSTCTL values, masks controller interrupts before asserting disconnect, waits for disconnect to settle before resetting the core, and replaces the original 50-million-iteration volatile SRAM loop with a register-only ARM delay. All existing bounded AHB/core reset/FIFO waits are retained with register diagnostics on timeout. The PHY, DDR, EP0 descriptors and test VID/PID choices are unchanged. Delay duration is approximate, not measured. MMIO bus stalls cannot be bounded by software polling; the last step label is intended to identify them.
 
 Rebuild and cold-boot rom_usb_dnw_enum.bin as before; send lowercase e once after DDR EXEC PASS. Capture from PRE GAHBCFG through the last [USB n] step or USB RECONNECT. If it stops, do not repeatedly send e; cold power-cycle to recover. If needed compare rom_usb_enum.bin (1209:0001) with the same takeover code, using separate cold boots. Neither variant supports bulk downloads yet. Source reviewed; no cross-build or hardware validation for this revision.
+
+
+## EP0 takeover confirmed; EP2 PIO bulk experiment
+The 7343cb2 build completed all eleven takeover steps and reached SET_CONFIGURATION=1 and OPENBOOT USB CONFIGURED on the user's board. Brief pauses at steps 3 and 7 are intentional register-loop delays; their real duration was not measured. Preserve rom_usb_dnw_enum.bin as the EP0 baseline.
+
+New rom_usb_bulk.bin advertises a single OUT endpoint 0x02 (512-byte HS, 64-byte FS) and product TQ210 Bulk Test, bcdDevice 2, same local development VID/PID 04e8:1234. Bulk IN and original DNW stage2 protocol are NOT implemented. The device uses PIO, one packet per arm, and receives a 16-byte LE header (OBL1 magic 0x314c424f, payload length, standard CRC32, reserved 0), followed by payload. Maximum 16 MiB to fixed validated DDR region 0x24000000; no arbitrary address or execution. CRC32 is computed from DDR readback. Vendor EP0 read-only request C0/5A, value 4F42, index 4C31, length 20 reports magic, state (0 ready/1 receive/2 pass/3 fail), received count, expected length, CRC. Reset/reconfiguration discards transfer state. The new host --bulk-test checks product string, revision, active configuration and protocol magic before any bulk writes, sends 1 MiB+13 bytes and verifies device status; do not run it against iROM or earlier variants.
+
+    git pull
+    sh boot/build.sh
+    cmake --build build-host
+    # cold reboot into ROM mode; UART open
+    sudo ./build-host/tq210-dnw out/rom_usb_bulk.bin --pad-vendor-size
+
+Send e; attach TQ210 Bulk Test to Ubuntu. Confirm EP2 BULK OUT READY MPS=0x00000200 and OPENBOOT USB CONFIGURED. Run:
+
+    lsusb -d 04e8:1234
+    sudo ./build-host/tq210-dnw --bulk-test
+
+Expected BULK DDR VERIFY PASS on both host and UART, same CRC32. Stop on any error, cold power-cycle, and capture logs. No second upload to an already-used receiver; no execution or flash write. Newly written source, not cross-compiled or board-tested in this submission. Driver timing, endpoint interrupts and FS transfer remain experimental.

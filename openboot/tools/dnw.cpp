@@ -9,6 +9,8 @@
 #include <vector>
 #include <numeric>
 #include <algorithm>
+#include <thread>
+#include <chrono>
 #if __has_include(<libusb-1.0/libusb.h>)
 #include <libusb-1.0/libusb.h>
 #else
@@ -21,6 +23,11 @@ struct libusb_config_descriptor {uint8_t bLength,bDescriptorType;uint16_t wTotal
 int libusb_init(libusb_context**); void libusb_exit(libusb_context*);
 libusb_device_handle* libusb_open_device_with_vid_pid(libusb_context*,uint16_t,uint16_t);
 void libusb_close(libusb_device_handle*);libusb_device* libusb_get_device(libusb_device_handle*);
+struct libusb_device_descriptor {uint8_t bLength,bDescriptorType;uint16_t bcdUSB;uint8_t bDeviceClass,bDeviceSubClass,bDeviceProtocol,bMaxPacketSize0;uint16_t idVendor,idProduct,bcdDevice;uint8_t iManufacturer,iProduct,iSerialNumber,bNumConfigurations;};
+int libusb_get_device_descriptor(libusb_device*,libusb_device_descriptor*);
+int libusb_get_string_descriptor_ascii(libusb_device_handle*,uint8_t,unsigned char*,int);
+int libusb_control_transfer(libusb_device_handle*,uint8_t,uint8_t,uint16_t,uint16_t,unsigned char*,uint16_t,unsigned int);
+int libusb_get_configuration(libusb_device_handle*,int*);
 int libusb_set_configuration(libusb_device_handle*,int);
 int libusb_get_active_config_descriptor(libusb_device*,libusb_config_descriptor**);
 void libusb_free_config_descriptor(libusb_config_descriptor*);
@@ -62,7 +69,63 @@ static void selftest(){
     auto q=packets(Bytes{1},0xd0020010,true,true);if(q.size()!=1||q[0].size()!=11||q[0][9]!=1||q[0][10]!=0)throw std::runtime_error("joined tail mismatch");
     std::cout<<"Packet selftest PASS\n";
 }
+static uint32_t crc32(const Bytes& b){
+    uint32_t crc=0xffffffffu;
+    for(uint8_t x:b){crc^=x;for(unsigned bit=0;bit<8;bit++)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
+    return ~crc;
+}
+static uint32_t get32(const uint8_t* p){return uint32_t(p[0])|(uint32_t(p[1])<<8)|(uint32_t(p[2])<<16)|(uint32_t(p[3])<<24);}
+static Bytes bulk_status(libusb_device_handle* h){
+    Bytes status(20);
+    int n=libusb_control_transfer(h,0xc0,0x5a,0x4f42,0x4c31,status.data(),20,3000);
+    check(n,"OpenBoot protocol status");if(n!=20||get32(status.data())!=0x314c424fu)throw std::runtime_error("not OpenBoot bulk protocol; nothing sent");
+    return status;
+}
+static void bulk_test(){
+    const Bytes check_vector{'1','2','3','4','5','6','7','8','9'};
+    if(crc32(check_vector)!=0xcbf43926u)throw std::runtime_error("CRC32 selftest");
+    Usb u;check(libusb_init(&u.c),"libusb_init");
+    u.h=libusb_open_device_with_vid_pid(u.c,0x04e8,0x1234);
+    if(!u.h)throw std::runtime_error("attach OpenBoot Bulk Test to Ubuntu");
+    libusb_device_descriptor dd{};
+    check(libusb_get_device_descriptor(libusb_get_device(u.h),&dd),"device descriptor");
+    if(dd.bcdDevice!=2||!dd.iProduct)throw std::runtime_error("wrong device revision; do not send to iROM");
+    unsigned char name[128]{};
+    int n=libusb_get_string_descriptor_ascii(u.h,dd.iProduct,name,sizeof(name));
+    check(n,"product string");if(std::string(reinterpret_cast<char*>(name),size_t(n))!="TQ210 Bulk Test")throw std::runtime_error("wrong product; nothing sent");
+    int cfg=0;check(libusb_get_configuration(u.h,&cfg),"get configuration");
+    if(cfg!=1)throw std::runtime_error("configuration 1 not active; attach device again");
+    auto status=bulk_status(u.h);
+    if(get32(status.data()+4)!=0||get32(status.data()+8)!=0)throw std::runtime_error("receiver not fresh; cold reboot before retry");
+    check(libusb_claim_interface(u.h,0),"claim interface");u.iface=0;
+    Bytes payload((1u<<20)+13u);
+    uint32_t seed=0x21012345u;
+    for(auto& x:payload){seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;x=uint8_t(seed);}
+    uint32_t crc=crc32(payload);
+    Bytes wire;append32(wire,0x314c424fu);append32(wire,uint32_t(payload.size()));append32(wire,crc);append32(wire,0);
+    wire.insert(wire.end(),payload.begin(),payload.end());
+    std::printf("OpenBoot EP2 test: %zu payload bytes CRC32=%08x\n",payload.size(),unsigned(crc));
+    for(size_t i=0;i<wire.size();){
+        int chunk=int(std::min<size_t>(65536,wire.size()-i)),sent=0;
+        int rc=libusb_bulk_transfer(u.h,2,wire.data()+i,chunk,&sent,15000);
+        check(rc,"bulk OUT");if(sent!=chunk)throw std::runtime_error("short write; cold reboot before retry");
+        i+=size_t(sent);std::printf("Sent %zu/%zu\n",i,wire.size());std::fflush(stdout);
+    }
+    for(unsigned tries=0;tries<30;tries++){
+        status=bulk_status(u.h);
+        uint32_t state=get32(status.data()+4),got=get32(status.data()+8),len=get32(status.data()+12),actual=get32(status.data()+16);
+        if(state==3)throw std::runtime_error("device reported DDR verify failure");
+        if(state==2){
+            if(got!=payload.size()||len!=payload.size()||actual!=crc)throw std::runtime_error("verification result mismatch");
+            std::printf("BULK DDR VERIFY PASS: %u bytes CRC32=%08x\n",unsigned(got),unsigned(actual));return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    throw std::runtime_error("device verification did not complete");
+}
+
 int main(int argc,char** argv){try{
+    if(argc==2&&std::string(argv[1])=="--bulk-test"){bulk_test();return 0;}
     bool dry=false,full=false,join=false,pad=false,reconfig=true;std::string path;
     for(int i=1;i<argc;i++){std::string a=argv[i];if(a=="--selftest"){selftest();return 0;}else if(a=="--dry-run")dry=true;else if(a=="--full-checksum")full=true;else if(a=="--join-tail")join=true;else if(a=="--pad-vendor-size")pad=true;else if(a=="--no-reconfigure")reconfig=false;else if(!a.empty()&&a[0]!='-'&&path.empty())path=a;else throw std::runtime_error("unknown argument: "+a);}
     if(path.empty()){std::cout<<"Usage: tq210-dnw IMAGE [--dry-run] [--full-checksum] [--join-tail] [--pad-vendor-size] [--no-reconfigure]\n       tq210-dnw --selftest\n";return 1;}
