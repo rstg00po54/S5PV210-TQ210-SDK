@@ -1,6 +1,7 @@
 #include "memory.h"
 #include "timebase.h"
 #include "selftest.h"
+#include "scheduler.h"
 
 static uintptr_t held;
 static unsigned held_pages;
@@ -39,7 +40,8 @@ static void help(void)
                   "timer off  Stop Timer1 IRQ\r\n"
                   "ticks      Show timer tick count\r\n"
                   "irqtest    Run bounded Timer1 IRQ self-test\r\n"
-                  "autotest   Run automatic MMU/cache/DDR/timer tests\r\n"
+                  "schedtest  Test preemptive thread context switching\r\n"
+                  "autotest   Run MMU/cache/DDR/IRQ/scheduler tests\r\n"
                   "halt       Stop; cold power-cycle to restart\r\n");
 }
 static void execute(char *line)
@@ -102,6 +104,8 @@ static void execute(char *line)
         timer_stop();
     } else if (equal(line, "ticks")) {
         timer_info();
+    } else if (equal(line, "schedtest")) {
+        scheduler_selftest();
     } else if (equal(line, "autotest")) {
         runtime_autotest();
     } else if (equal(line, "halt")) {

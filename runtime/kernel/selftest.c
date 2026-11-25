@@ -1,6 +1,7 @@
 #include "memory.h"
 #include "timebase.h"
 #include "selftest.h"
+#include "scheduler.h"
 
 #define SCTLR_M 1u
 #define SCTLR_C (1u << 2)
@@ -118,6 +119,15 @@ void runtime_autotest(void)
         return;
     }
     if (run_stage("Post-IRQ DDR memory self-test", memory_selftest)) {
+        report(0);
+        return;
+    }
+
+    if (run_stage("Preemptive thread context switch", scheduler_selftest)) {
+        report(0);
+        return;
+    }
+    if (run_stage("Post-scheduler DDR memory self-test", memory_selftest)) {
         report(0);
         return;
     }

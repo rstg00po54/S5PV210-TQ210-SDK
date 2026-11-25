@@ -61,3 +61,22 @@ TCON 的 Timer0 start/reload、Timer2 reload（未启动）、Timer4 start 置�
     Passed: 7  Skipped: 0  Failed: 0
 
 证明 Timer1 计数、自动重载及连续 pending 清除可用；CPU IRQ 尚未打开，不能据此认定 VIC 或异常返回已验证。下一版在 autotest 增加独立 IRQ 阶段与 IRQ 后内存测试。目标为 10 次 IRQ 后自动停止；该新代码尚待实机。
+
+## 第四轮：IRQ 实机验证通过
+
+提交 231a4ee 安全版 autotest 9/9 PASS。用户日志：
+
+    VIC0 enable=0x00400000
+    Timer stopped; IRQ masked.
+    Timer1: STOPPED
+    Ticks: 10
+    IRQ TEST CPSR=0x600001D3
+    IRQ TEST VIC0 enable=0x00000000
+    IRQ TEST TCON=0x00108009
+    IRQ TEST TINT_CSTAT=0x00000230
+    IRQ TEST PASS: 10 IRQs, returned to foreground, source stopped
+    [AUTO] PASS: Post-IRQ DDR memory self-test
+    RESULT: PASS
+    Passed: 9  Skipped: 0  Failed: 0
+
+Timer1/VIC IRQ、返回 SVC 前台、停止与回归测试均通过。此记录属于 v0.2 旧 IRQ 入口，不代表 v0.3 完整上下文切换已通过。

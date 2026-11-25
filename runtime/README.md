@@ -104,3 +104,7 @@ timer probe 仅在 MMU、D-Cache 已打开且 ROM 时钟配置匹配时运行，
 ## v0.2 IRQ 自动测试
 
 安全版冷启动后输入 autotest，预期全部 9 项通过。也可单独输入 irqtest（要求 MMU/D-Cache 已开启；必要时自动执行 Timer1 轮询）。IRQ 测试沿用独占 VIC 初始化，会屏蔽并清除其他 VIC 源；不恢复 ROM 的 VIC 配置，不适合与其他中断驱动共存。Timer0/4 的 PWM 配置和外设 pending 不变。IRQ 中仅递增计数、清除 Timer1 pending、执行 EOI；达到 10 次即在 IRQ 内停止并屏蔽 Timer1，返回前台后再次执行停止和读回检查。检查计数、CPU IRQ mask、VIC enable、TCON 和 Timer1 pending/enable。前台等待有有限循环预算，不是校准时间；如果 CPU 卡在异常或硬件访问中仍需冷启动。随后 autotest 再执行内存自测。没有线程调度，IRQ 频率未校准。新增阶段尚未交叉编译或实机验证。OpenBoot 不变。
+
+## v0.3 抢占式上下文切换实验
+
+新增 [SCHEDULER.md](SCHEDULER.md)。安全版 autotest 现有 11 项；也可单独 schedtest。旧 v0.2 的 9/9 IRQ 实机通过记录见 HW_VALIDATION_V02.md，新版完整上下文保存及调度尚未验证。上面的 v0.2 说明为历史记录。

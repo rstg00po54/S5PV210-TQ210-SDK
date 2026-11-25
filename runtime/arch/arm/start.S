@@ -81,12 +81,5 @@ FAULT fault_pabort,3,4
 FAULT fault_dabort,4,8
 FAULT fault_reserved,5,0
 FAULT fault_fiq,7,4
-/* IRQ stack is 8-byte aligned; save caller-clobbered registers and LR.
- * IRQ remains masked in the handler; SPSR_irq is untouched by C.
- */
-irq_entry:
-    push {r0-r3,r12,lr}
-    bl irq_dispatch
-    pop {r0-r3,r12,lr}
-    subs pc,lr,#4
+/* IRQ 入口及上下文切换独立实现于 context.S。 */
 .section .note.GNU-stack,"",%progbits

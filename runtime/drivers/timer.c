@@ -179,6 +179,7 @@ int timer_probe(void)
     return 0;
 }
 
+/* 初始化 VIC 和 Timer1；最后才开放 CPU IRQ。 */
 int timer_start(void)
 {
     if (!probed) {
@@ -188,11 +189,14 @@ int timer_start(void)
     if (prepare()) {
         return -1;
     }
+    /* 独占 VIC：屏蔽继承的中断源，只允许 Timer1。 */
     vic_disable_all();
     ticks = 0;
+    /* 22 号输入对应 Timer1；设置向量槽及优先级。 */
     VIC(0, PRIORITY_MASK) = 0xffffu;
     VIC(0, VECTOR_SLOT + 22u*4u) = 22u;
     VIC(0, VECTOR_PRIORITY + 22u*4u) = 0u;
+    /* 清旧 pending、开启外设请求，再打开 VIC 线路。 */
     timer1_ack(1);
     VIC(0, INT_ENABLE) = T1_IRQ;
     dsb();
@@ -202,16 +206,36 @@ int timer_start(void)
         console_write("VIC enable FAIL\r\n");
         return -1;
     }
+    /* 软件状态先就绪，然后启动硬件自动重载。 */
     active = 1;
     PWM(TCON) |= T1_START | T1_RELOAD;
     dsb();
     console_reg("VIC0 enable=", VIC(0, INT_ENABLE));
     console_reg("VIC0 IRQ status=", VIC(0, IRQ_STATUS));
     console_write("Timer1 IRQ enabled; entering CPU IRQ test/run.\r\n");
+    /* CPU 最后一层 IRQ 屏蔽解除；此后随时可能被抢占。 */
     __asm__ volatile("cpsie i" ::: "memory");
     isb();
     return 0;
 }
+
+/* 有界实验：达到 limit 后 IRQ 内关闭硬件，前台收尾。 */
+int timer_start_bounded(unsigned limit)
+{
+    if (!limit || active) {
+        return -1;
+    }
+    irq_test_error = 0;
+    irq_test_limit = limit;
+    if (timer_start()) {
+        irq_test_limit = 0;
+        return -1;
+    }
+    return 0;
+}
+
+uint32_t timer_ticks(void) { return ticks; }
+int timer_test_failed(void) { return irq_test_error != 0u; }
 
 void timer_stop(void)
 {
@@ -223,6 +247,7 @@ void timer_stop(void)
     VIC(0, INT_CLEAR) = T1_IRQ;
     stop_hw();
     active = 0;
+    irq_test_limit = 0;
     dsb();
     console_write("Timer stopped; IRQ masked.\r\n");
     timer_info();
@@ -253,11 +278,8 @@ int timer_irq_selftest(void)
         return -1;
     }
 
-    irq_test_error = 0;
-    irq_test_limit = 10u;
     console_write("IRQ TEST: wait for 10 Timer1 interrupts and returns\r\n");
-    if (timer_start()) {
-        irq_test_limit = 0;
+    if (timer_start_bounded(10u)) {
         return -1;
     }
 
