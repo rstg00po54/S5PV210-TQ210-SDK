@@ -218,9 +218,9 @@ static void auto_boot(const char* loader,const char* app){
     bulk_send(payload,true,true);
     elapsed("total through USB GO ACK",total_start);
 }
-static void handoff_notice(libusb_device_handle* h,const char* expected,const char* label){
+static void handoff_notice(libusb_device_handle* h,const char* expected,const char* label,unsigned timeout=5000){
     Bytes buf(512);int got=0;
-    const int rc=libusb_bulk_transfer(h,0x81,buf.data(),int(buf.size()),&got,5000);
+    const int rc=libusb_bulk_transfer(h,0x81,buf.data(),int(buf.size()),&got,timeout);
     check(rc,label);
     if(got!=16||std::string(reinterpret_cast<const char*>(buf.data()),size_t(got))!=expected)
         throw std::runtime_error(std::string(label)+": unexpected response; cold reboot");
@@ -298,14 +298,18 @@ static void dma_boot(const char* loader,Bytes payload,bool executable){
         }
     }
     elapsed("DMA image upload",upload);
+    const double upload_seconds=std::chrono::duration<double>(Clock::now()-upload).count();
+    if(upload_seconds>0.0)std::printf("[RATE] DMA payload: %.2f MiB/s\n",double(payload.size())/(1048576.0*upload_seconds));
     const auto verify=Clock::now();
-    handoff_notice(u.h,"OB-DMA-VERIFYOK!","DMA DDR VERIFY PASS");
+    handoff_notice(u.h,"OB-DMA-VERIFYOK!","DMA DDR VERIFY PASS",30000);
     elapsed("DDR CRC32 verification",verify);
+    const double verify_seconds=std::chrono::duration<double>(Clock::now()-verify).count();
+    if(verify_seconds>0.0)std::printf("[RATE] DDR verify including status: %.2f MiB/s\n",double(payload.size())/(1048576.0*verify_seconds));
     if(executable){
         Bytes go{'O','B','-','D','M','A','-','E','X','E','C','-','G','O','1','!'};
         const auto launch=Clock::now();
         dma_write(u.h,go.data(),int(go.size()),"DMA GO");
-        handoff_notice(u.h,"OB-DMA-GO-ACK01!","DMA GO ACK");
+        handoff_notice(u.h,"OB-DMA-GO-ACK01!","DMA GO ACK",30000);
         elapsed("GO and second DDR CRC32",launch);
         std::cout<<"CPU execution must be confirmed on UART.\n";
     }

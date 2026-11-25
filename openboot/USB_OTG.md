@@ -157,3 +157,19 @@ New rom_usb_dma_boot.bin retains the verified handoff guard and EP1 notification
     sudo ./build-host/tq210-dnw --dma-test out/rom_usb_dma_boot.bin
 
 Expected boot UART DDR APP EXEC PASS; data-only test 1048589 bytes CRC32 0x6eefefc7, no execution. Host timing ends at GO ACK, not actual application execution. No measured direct-DDR throughput yet; new multi-packet DMA mode, CRC and launch path are uncompiled and untested in this revision. Fail closed on unexpected state; cold reboot before retry.
+
+
+## Direct-to-DDR DMA boot and 1 MiB test measured
+User's 30a40e9 run: 188-byte image CRC32 0x9bb258bc, same-handle readiness 153 ms, upload 1 ms, verify 10 ms, GO + second CRC 4 ms, total through GO ACK 197 ms (previous re-enumeration path 4968 ms). Actual UART execution line not supplied for this run. Data-only 1048589-byte image CRC32 0x6eefefc7: upload 51 ms (~19.61 MiB/s), verify/status 813 ms (~1.23 MiB/s), total 1046 ms. Both device verification markers accepted. Reboot into ROM between commands; first attempt without reconnect could not access 04e8:1234.
+
+## Optional faster DDR CRC
+rom_usb_dma_fast.bin keeps the existing OBL2 wire protocol, DMA windows and double verification. Generates 256-entry CRC32 table in iRAM (1024 bytes extra BSS) and checks 123456789 -> 0xcbf43926 on target. Reads aligned little-endian DDR words instead of four byte loads, four table steps per word; handles 0..3 tail bytes without overread. USB state checked per 4KiB and after tail. No MMU/cache configuration or clock change. Host verification/GO timeouts increased to 30 s for large images; readiness timeout remains 5 s. Host prints approximate payload and verify/status MiB/s. Original nibble-table rom_usb_dma_boot.bin retained for A/B test. Algorithm equivalent JS reference verified against bitwise CRC on 21 lengths including 1 MiB+13 and known vectors (this is not a C/ARM build or hardware test). New firmware has not been cross-compiled; check iRAM linker assertion and vendor frame size. No measured new speedup yet.
+
+    git pull
+    sh boot/build.sh
+    cmake --build build-host
+    # cold boot to ROM each time
+    sudo ./build-host/tq210-dnw --dma-test out/rom_usb_dma_fast.bin
+    sudo ./build-host/tq210-dnw --dma-boot out/rom_usb_dma_fast.bin out/ddr_app.bin
+
+Expected same CRC32, verify marker, and for executable test UART DDR APP EXEC PASS. Report TIME and RATE lines. No flash I/O.

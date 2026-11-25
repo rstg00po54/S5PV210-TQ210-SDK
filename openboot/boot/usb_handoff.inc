@@ -144,6 +144,60 @@ static void handoff_wait_dma(unsigned capacity,unsigned expected){
     __asm__ volatile("dsb sy":::"memory");
     HW(H_DOEPINT2,H_XFRC);
 }
+#ifdef USB_HANDOFF_CRC_FAST
+/* Generate the byte table in owned iRAM rather than growing the ROM frame.
+   No MMU or data-cache change: USB DMA remains coherent. */
+static uint32_t handoff_crc_table[256];
+static unsigned handoff_crc_table_ready;
+static uint32_t handoff_crc_step(uint32_t crc){
+    return (crc>>8)^handoff_crc_table[crc&255u];
+}
+static void handoff_crc_init(void){
+    if(handoff_crc_table_ready)return;
+    for(unsigned i=0;i<256u;i++){
+        uint32_t v=i;
+        for(unsigned j=0;j<8u;j++)
+            v=(v>>1)^((0u-(v&1u))&0xedb88320u);
+        handoff_crc_table[i]=v;
+    }
+    uint32_t crc=0xffffffffu;
+    static const char check[]="123456789";
+    for(unsigned i=0;i<9u;i++)crc=handoff_crc_step(crc^(uint8_t)check[i]);
+    if(~crc!=0xcbf43926u)handoff_abort("CRC32 table selftest");
+    handoff_crc_table_ready=1;
+}
+static uint32_t handoff_crc(uint32_t length){
+    /* Cortex-A8 in the verified little-endian physical addressing state.
+       One aligned volatile DDR load per four bytes; handle short tail
+       separately, never read beyond the received length. */
+    uint32_t ctl;
+    __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(ctl));
+    if(ctl&(5u|HB(25)))handoff_abort("unexpected CRC CPU state");
+    handoff_crc_init();
+    __asm__ volatile("dsb sy":::"memory");
+    uint32_t crc=0xffffffffu,offset=0;
+    while(length-offset>=4u){
+        uint32_t end=offset+4096u;
+        if(end>length)end=length;
+        end&=~3u;
+        handoff_check();
+        while(offset<end){
+            crc^=R(H_IMAGE_BASE+offset);
+            crc=handoff_crc_step(crc);
+            crc=handoff_crc_step(crc);
+            crc=handoff_crc_step(crc);
+            crc=handoff_crc_step(crc);
+            offset+=4u;
+        }
+    }
+    while(offset<length){
+        crc=handoff_crc_step(crc^B(H_IMAGE_BASE+offset));
+        offset++;
+    }
+    handoff_check();
+    return ~crc;
+}
+#else
 static uint32_t handoff_crc(uint32_t length){
     /* Reflected CRC-32/ISO-HDLC, 4 bits per lookup. */
     static const uint32_t table[16]={
@@ -161,6 +215,7 @@ static uint32_t handoff_crc(uint32_t length){
     }
     return ~crc;
 }
+#endif
 static void handoff_run(void){
     uint32_t ctl,zero=0;
     __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(ctl));
