@@ -2,7 +2,7 @@
 
 void runtime_main(void)
 {
-    console_write("\r\nTQ210 Runtime v0.3\r\n");
+    console_write("\r\nTQ210 Runtime v0.4\r\n");
     console_write("[0] DDR ENTRY / private stacks / BSS OK\r\n");
     cpu_info();
 

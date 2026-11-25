@@ -2,6 +2,7 @@
 #include "timebase.h"
 #include "selftest.h"
 #include "scheduler.h"
+#include "task.h"
 
 #define SCTLR_M 1u
 #define SCTLR_C (1u << 2)
@@ -128,6 +129,15 @@ void runtime_autotest(void)
         return;
     }
     if (run_stage("Post-scheduler DDR memory self-test", memory_selftest)) {
+        report(0);
+        return;
+    }
+
+    if (run_stage("C thread lifecycle / sleep / stack reclaim", task_selftest)) {
+        report(0);
+        return;
+    }
+    if (run_stage("Post-task DDR memory self-test", memory_selftest)) {
         report(0);
         return;
     }

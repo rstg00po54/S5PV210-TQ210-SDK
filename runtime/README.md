@@ -108,3 +108,7 @@ timer probe 仅在 MMU、D-Cache 已打开且 ROM 时钟配置匹配时运行，
 ## v0.3 抢占式上下文切换实验
 
 新增 [SCHEDULER.md](SCHEDULER.md)。安全版 autotest 现有 11 项；也可单独 schedtest。旧 v0.2 的 9/9 IRQ 实机通过记录见 HW_VALIDATION_V02.md，新版完整上下文保存及调度尚未验证。上面的 v0.2 说明为历史记录。
+
+## v0.4 C 线程创建、休眠、唤醒与退出
+
+v0.3 实机 11/11 通过记录见 [HW_VALIDATION_V03.md](HW_VALIDATION_V03.md)。v0.4 新增 [TASKS.md](TASKS.md)，autotest 扩展到 13 项；也可单独 tasktest。保留原有汇编 IRQ 入口及旧调度器回归测试，新增有界 C 线程生命周期实验。尚待构建及实机验证。

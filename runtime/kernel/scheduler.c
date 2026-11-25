@@ -1,5 +1,6 @@
 #include "scheduler.h"
 #include "timebase.h"
+#include "task.h"
 
 #define THREADS 3u
 #define STACK_WORDS 1024u
@@ -84,7 +85,7 @@ static int verify_worker(unsigned id, const struct irq_frame *f)
 struct irq_frame *scheduler_on_irq(struct irq_frame *frame)
 {
     if (!running) {
-        return frame;
+        return task_on_irq(frame);
     }
     unsigned id = current;
     copy_frame(&contexts[id], frame);
