@@ -183,30 +183,62 @@ static void usb_rx(void) {
         usb_phase=USB_IDLE;usb_arm_setup();
     }
 }
+/* Keep the delay counter in a CPU register, not uncached SRAM.
+ * Approximate settling delay at the verified 400 MHz ARM clock. */
+static void usb_settle(void) {
+    uint32_t n=40000000u;
+    __asm__ volatile("1: subs %0,%0,#1\n bne 1b":"+r"(n)::"cc","memory");
+}
 static int usb_start(void) {
-    if(UREG(0x040u)!=0x4f54281au||(UREG(GINTSTS)&1u)||
-       !(R(0xe010e80cu)&1u)||!(R(0xe0100464u)&UBIT(16))) {
+    if(!(R(0xe010e80cu)&1u)||!(R(0xe0100464u)&UBIT(16))||
+       UREG(0x040u)!=0x4f54281au||(UREG(GINTSTS)&1u)) {
         out("USB ENUM BLOCKED: unexpected hardware/mode\r\n");return 0;
     }
     uint32_t cfg=UREG(GUSBCFG);
     out("USB SOFT DISCONNECT; taking ownership from iROM\r\n");
-    UW(DCTL,UREG(DCTL)|SOFT_DISCONNECT);
+    reg("PRE GAHBCFG=",UREG(GAHBCFG));
+    reg("PRE DCTL=",UREG(DCTL));
+    reg("PRE GRSTCTL=",UREG(GRSTCTL));
+    out("[USB 1] mask interrupts\r\n");
     UW(GINTMSK,0);
-    if(!usb_wait(GRSTCTL,UBIT(31),UBIT(31))) {out("USB AHB IDLE TIMEOUT\r\n");return 0;}
+    out("[USB 2] assert soft disconnect\r\n");
+    UW(DCTL,UREG(DCTL)|SOFT_DISCONNECT);
+    reg("DISCONNECTED DCTL=",UREG(DCTL));
+    out("[USB 3] disconnect settle\r\n");
+    usb_settle();
+    out("[USB 4] wait AHB idle\r\n");
+    if(!usb_wait(GRSTCTL,UBIT(31),UBIT(31))) {
+        reg("USB AHB IDLE TIMEOUT GRSTCTL=",UREG(GRSTCTL));return 0;
+    }
+    out("[USB 5] core soft reset\r\n");
     UW(GRSTCTL,1);
-    if(!usb_wait(GRSTCTL,1,0)) {out("USB CORE RESET TIMEOUT\r\n");return 0;}
+    if(!usb_wait(GRSTCTL,1,0)) {
+        reg("USB CORE RESET TIMEOUT GRSTCTL=",UREG(GRSTCTL));return 0;
+    }
+    reg("CORE RESET DONE GRSTCTL=",UREG(GRSTCTL));
+    out("[USB 6] reassert disconnect; disable DMA/IRQ\r\n");
     UW(DCTL,SOFT_DISCONNECT);
-    /* DMA and global IRQ disabled. Preserve iROM PHY interface and turnaround. */
     UW(GAHBCFG,0);
+    reg("PIO GAHBCFG=",UREG(GAHBCFG));
+    out("[USB 7] force device mode; settle\r\n");
     UW(GUSBCFG,(cfg&~UBIT(29))|UBIT(30));
-    for(volatile unsigned i=0;i<50000000u;i++)__asm__ volatile("nop");
+    usb_settle();
     if(UREG(GINTSTS)&1u){out("USB DEVICE MODE FAILED\r\n");return 0;}
+    reg("DEVICE GUSBCFG=",UREG(GUSBCFG));
+    out("[USB 8] configure FIFO sizes\r\n");
     UW(DCTL,SOFT_DISCONNECT);
     UW(GRXFSIZ,1024u);UW(GNPTXFSIZ,(256u<<16)|1024u);
+    out("[USB 9] flush TX FIFO\r\n");
     UW(GRSTCTL,UBIT(5)|(16u<<6));
-    if(!usb_wait(GRSTCTL,UBIT(5),0)){out("USB TX FLUSH TIMEOUT\r\n");return 0;}
+    if(!usb_wait(GRSTCTL,UBIT(5),0)){
+        reg("USB TX FLUSH TIMEOUT GRSTCTL=",UREG(GRSTCTL));return 0;
+    }
+    out("[USB 10] flush RX FIFO\r\n");
     UW(GRSTCTL,UBIT(4));
-    if(!usb_wait(GRSTCTL,UBIT(4),0)){out("USB RX FLUSH TIMEOUT\r\n");return 0;}
+    if(!usb_wait(GRSTCTL,UBIT(4),0)){
+        reg("USB RX FLUSH TIMEOUT GRSTCTL=",UREG(GRSTCTL));return 0;
+    }
+    out("[USB 11] initialize EP0\r\n");
     UW(DCFG,0); /* High-speed capable UTMI device; host may negotiate FS. */
     UW(GINTSTS,0xffffffffu);
     UW(DIEPMSK,0x0fu);UW(DOEPMSK,0x0fu);UW(DAINTMSK,0x10001u);
