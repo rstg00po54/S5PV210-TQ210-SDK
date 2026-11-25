@@ -1,8 +1,15 @@
-# TQ210 OpenBoot v0.1 — 实验性独立 SRAM / DDR2 启动
+# TQ210 OpenBoot — 独立启动加载器
 
-适用目标：天嵌 TQ210 CoreB / S5PV210，按原厂 USB BL2 逆向得到的双 DMC 参数编写。**未实机验证，不是已完成的替代 BL2。** 不包含原厂 BL2 二进制，不访问 NAND/SD，不写非易失存储。断电后 RAM 中的程序消失。
+适用目标：天嵌 TQ210 CoreB / S5PV210。本项目根据原厂 USB BL2 的逆向结果独立实现 SRAM 启动、双 DMC DDR2 初始化及 USB 下载。固件不包含原厂 BL2 机器码，不访问 NAND/SD，不写入非易失存储；断电后 RAM 中的程序消失。
 
-## 构建及第一次实机验证（Ubuntu / VMware Linux）
+## 当前进度
+
+- 已实机验证 ROM 时钟继承、独立 SRAM C 入口、双 DMC 初始化及完整 1 GiB DDR 地址/数据模式测试。
+- 已验证同一 USB 连接上的双向 DMA、直接向 DDR 下载并执行独立 ARM 镜像。
+- 推荐使用 `rom_usb_dma_fast.bin`；历史实验固件仍保留。完整测试条件与限制见 [DDR_GEOMETRY.md](DDR_GEOMETRY.md)、[USB_OTG.md](USB_OTG.md)。
+- 目前尚未实现 Linux 启动 ABI、持久化存储启动及生产级 USB 协议栈。
+
+## 构建及使用（Ubuntu / VMware Linux）
 
 在仓库根目录执行：
 
@@ -14,20 +21,30 @@ sh boot/build.sh
 cmake -S tools -B build-host
 cmake --build build-host
 ./build-host/tq210-dnw --selftest
-./build-host/tq210-dnw out/sram.bin --pad-vendor-size --dry-run
 ```
 
-也可使用 clang/LLD + llvm-objcopy + llvm-objdump 构建固件。本目录只跟踪源码，out/ 和 build-host/ 为本地构建产物。
-
-建议在已验证原厂 stage1 USB 传输的同一 Ubuntu 环境使用。先打开 UART0（例如 Windows COM5），115200 8N1，无流控，确认板卡 UART 电平匹配。每次上传前完全断电再进入 USB iROM 下载模式；只连接一块 Samsung 04e8:1234 设备。**不要先上传原厂 BL2。**
+也可使用 clang/LLD + llvm-objcopy + llvm-objdump 构建固件。本目录只跟踪源码，out/ 和 build-host/ 为本地构建产物。每次上传前完全断电再进入 USB iROM 下载模式；只连接一块 Samsung 04e8:1234 设备。先打开 UART0（例如 Windows COM5），115200 8N1，无流控，确认板卡 UART 电平匹配。不要先上传原厂 BL2。
 
 ```sh
+sudo ./build-host/tq210-dnw --dma-boot out/rom_usb_dma_fast.bin out/ddr_app.bin
+# 另一次冷启动后进行数据校验测试：
+sudo ./build-host/tq210-dnw --dma-test out/rom_usb_dma_fast.bin
+```
+
+预期串口输出 `DDR APP EXEC PASS: independent ARM image at 0x24000000`。数据测试预期长度 1048589，CRC32 为 0x6eefefc7。主机 GO ACK 不等于实际执行；必须检查串口。DMA 继承方案仅用于受控本地实验，接管期间不要使用其他 USB 查询工具。
+
+## 历史 v0.1 实验（未经原始实机验证的独立 PLL 初始化）
+
+最早版本用于分离 SRAM 入口与 DDR 问题。以下是历史测试方法，不是当前推荐启动方式。
+
+```sh
+./build-host/tq210-dnw out/sram.bin --pad-vendor-size --dry-run
 sudo ./build-host/tq210-dnw out/sram.bin --pad-vendor-size
 ```
 
 默认使用已验证的原厂 stage1 分离校验和传输、SET_CONFIGURATION(1)，并填充至原厂 11168 字节（仅添加零，不包含原厂代码），保持下载尺寸及传输形状。初始地址 0xD0020010。USB 传输成功不代表 CPU 已执行。
 
-预期日志：
+历史预期日志：
 
 ```text
 TQ210 OpenBoot v0.1 EXPERIMENTAL
@@ -59,29 +76,27 @@ sudo ./build-host/tq210-dnw out/ddr.bin --pad-vendor-size
 
 ## 源码结构
 
-- `boot/start.S`: ARM entry, aligned VBAR, SVC stack, BSS, exception handling, position-independent DDR stub.
-- `boot/iram.ld`: link at 0xD0020010, reserve within 16 KiB experimental window; assertions for entry, alignment and stack limit.
-- `boot/main.c`: UART, bounded PLL/DMC polling, original board-specific DDR register values, independent cold RAM test.
-- `tools/dnw.cpp`: native Linux C++17/libusb downloader, stage1 only at this milestone. No Python, no vendor executable or firmware dependencies.
+- `boot/start.S`：ARM 入口、对齐的 VBAR、SVC 栈、BSS、异常处理及位置无关 DDR 测试代码。
+- `boot/iram.ld`：链接地址 0xD0020010，在实验用 16 KiB 窗口内保留空间，检查入口、对齐和栈边界。
+- `boot/main.c`：启动流程编排。
+- `soc/s5pv210/`、`drivers/`、`diagnostics/`、`protocol/`：SoC 初始化、外设驱动、硬件测试和下载协议。
+- `tools/`：原生 Linux C++17/libusb 下载器，无 Python 运行时、原厂可执行程序或固件依赖。
 
-## Test semantics and assumptions
+详见 [REFACTOR.md](REFACTOR.md)。早期验证文档描述的是历史源码布局。
 
-SRAM-only image initializes clocks but does not touch DDR. Assumes ROM runs in privileged ARM mode, MMU and D-cache disabled; otherwise startup halts without changing live memory mappings. Assumes 24 MHz crystal and known CoreB DDR setup. APLL/MPLL/EPLL are reconfigured with bounded lock polling, VPLL left untouched (not selected in the observed CLK_SRC0). Clock transition and pre-DDR UART divisor have not been measured on the hardware. UART diagnostics do not prove hardware initialization until actual results are seen. DMC PHY force and status predicate are from the vendor binary, not a generic DDR2 algorithm; DMC command gaps are a conservative implementation choice.
+## 测试含义与假设
 
-Both banks receive distinct 16 KiB patterns and their complements at 0x20010000 and 0x40010000; both are checked after both writes. The executable stub is then copied to 0x20010000 and returns a constant to the SRAM caller. This verifies instruction execution, not full OS relocation. The program's stack and diagnostics stay in SRAM. A successful test does not establish full memory capacity. Optional interactive a and b run sparse address-alias samples (16–256 MiB offsets), may cause bus hangs on unpopulated addresses; defer until basic DDR passes and use only during standalone RAM testing. Restore sampled words in reverse order when accesses complete. Do not assume the configured 512 MiB apertures are fully populated.
+历史 SRAM-only 版本初始化时钟但不访问 DDR。假设 ROM 在特权 ARM 模式运行，MMU 和 D-cache 关闭；否则启动代码停止，不改变现有内存映射。假设 24 MHz 晶振以及已知 CoreB DDR 配置。历史版本重新配置 APLL/MPLL/EPLL 并限时等待锁定，不修改未被观测到的 CLK_SRC0 选中的 VPLL。原始时钟切换及 DDR 前 UART 分频未实测；串口诊断需实际结果才能证明初始化。DMC PHY 强制配置及状态判断来自原厂二进制，不是通用 DDR2 算法；命令间隔采用保守实现。当前推荐版本继承 ROM 时钟，详见 [ROM_CLOCKS.md](ROM_CLOCKS.md)。
 
-## Evidence / references
+两个内存窗口分别在 0x20010000 和 0x40010000 写入不同的 16 KiB 模式及其反码，全部写完后再校验。随后将可执行测试代码复制到 0x20010000，执行并返回常量到 SRAM 调用者。这证明指令执行，不代表完整操作系统重定位。栈及诊断始终位于 SRAM。单次小范围测试不能确定完整容量。可选 a/b 命令测试稀疏地址镜像（16–256 MiB 偏移）；未装内存的地址可能导致总线挂起。仅在独立 RAM 测试时使用；访问完成时按逆序恢复原值。不能仅凭控制器配置的 512 MiB 窗口推断实际容量。后续完整测试已另行记录。
 
-- Original V210_USB.BL2.bin Git blob b271436e5e693a1de43b872a4c8b1d3d2937a83d, 11168 bytes; startup offsets 0x20–0xA8, DMC init offsets 0x23EC–0x27BC, DMC0/1 data tables at 0x2890 / 0x298C, command tables 0x292C / 0x2A28. Register values were independently transcribed into this source; original machine code is not included.
-- Existing SDK [USB_PROTOCOL.md](../research/USB_PROTOCOL.md), [HW_PROBE.md](../research/HW_PROBE.md), uart_rx.S, and SDK src/10.clock_s/clock.S.
-- TQ210 DDR address windows: https://www.eepw.com.cn/article/201611/322804.htm
-- Linux Samsung S5PV210 clock driver: https://cos.googlesource.com/third_party/kernel/+/cos-5.15/drivers/clk/samsung/clk-s5pv210.c
+## 证据与参考
 
-## Local validation
+- 原厂 V210_USB.BL2.bin Git blob b271436e5e693a1de43b872a4c8b1d3d2937a83d，11168 字节；启动偏移 0x20–0xA8，DMC 初始化偏移 0x23EC–0x27BC，DMC0/1 数据表 0x2890 / 0x298C，命令表 0x292C / 0x2A28。寄存器值独立转录，未包含原厂机器码。
+- [USB_PROTOCOL.md](../research/USB_PROTOCOL.md)、[HW_PROBE.md](../research/HW_PROBE.md)、`research/uart_rx.S` 与 `bare-metal/no-os-examples/src/10.clock_s/clock.S`。
+- TQ210 DDR 地址窗口：https://www.eepw.com.cn/article/201611/322804.htm
+- Linux Samsung S5PV210 时钟驱动：https://cos.googlesource.com/third_party/kernel/+/cos-5.15/drivers/clk/samsung/clk-s5pv210.c
 
-Cross-compiled using clang/LLD, ARM ELF entry and vector table alignment verified in disassembly; C++ host compiled with GNU C++ and linked libusb; packet selftest and dry runs passed. No physical USB transfer or DDR/UART execution tested here. Full stage2 USB device driver and downloader automation are future work, not included in v0.1.
+## 历史本地验证
 
-
-## Modular source layout
-
-See [REFACTOR.md](REFACTOR.md) for module layout, build commands and the regression checklist. Earlier validation documents refer to the historical source layout.
+v0.1 使用 clang/LLD 交叉编译，反汇编确认 ARM ELF 入口和向量表对齐；主机端使用 GNU C++ 编译、链接 libusb，封包自测和 dry-run 通过。当时未进行实际 USB 传输、DDR/UART 执行，完整 stage2 USB 驱动及自动化尚未完成。后续版本的实机记录见相关专题文档。

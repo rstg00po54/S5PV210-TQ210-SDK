@@ -1,6 +1,6 @@
-# OpenBoot v0.3 — hardware validation, 2026-11-25
+# OpenBoot v0.3 — 实机验证（2026-11-25）
 
-User-reported serial output, following the standalone iROM USB download test instructions. The SRAM and DDR builds ran successfully. The initial corrupted characters during the second upload are omitted; no substantive DDR lines are omitted. No vendor BL2 is needed on this boot path.
+用户按独立 iROM USB 下载流程提供的串口输出。SRAM 和 DDR 版本均运行成功。省略第二次上传开始时的乱码，未省略有实质意义的 DDR 日志。该启动路径不需要原厂 BL2。
 
 ```text
 TQ210 OpenBoot v0.3 ROM CLOCKS
@@ -61,12 +61,16 @@ READ 0x40010000
 OpenBoot diagnostic complete. a=optional DMC0 alias probe, b=DMC1.
 ```
 
-## Interpretation and limitations
-- Standalone SRAM C startup and the exact inherited clock checks passed.
-- DMC0 and DMC1 each passed two distinct 16 KiB patterns, with reads after writes to both banks.
-- The position-independent ARM stub copied into DMC0 memory executed and returned the expected constant to SRAM.
-- The configured 512 MiB windows are not proof of physical RAM capacity. Full memory stress, repeated cold boots, and executable tests in DMC1 remain unverified. No independent PLL reconfiguration, USB device driver or second-stage transfer has been demonstrated.
-- This run did not modify NAND/SD.
+## 结果解读与限制
 
-## Next experiment
-The existing rom_ddr.bin has a UART command loop. Send lowercase a (DMC0), wait for "Sample complete", then lowercase b (DMC1). It writes and restores six sampled 32-bit words at offsets 0, 16, 32, 64, 128, 256 MiB from each test base. Expected values in address order are 0xA11A0000 through 0xA11A0005 if none of the sampled addresses alias. These sparse samples do not establish full capacity. An unpopulated/invalid memory address may cause a bus hang; note the last PROBE address and power-cycle back into iROM, then reload rom_ddr.bin if necessary. Do not use on a running OS or with valuable data in RAM.
+- 独立 SRAM C 启动及继承时钟的精确寄存器检查通过。
+- DMC0 和 DMC1 均通过两种不同的 16 KiB 数据模式，写完两个窗口后再读取。
+- 复制到 DMC0 的位置无关 ARM 测试程序成功执行并返回预期常量到 SRAM。
+- 配置的 512 MiB 窗口不能证明物理 RAM 容量。当时完整内存压力、多次冷启动以及 DMC1 指令执行仍未验证；未证明独立 PLL 重配置、USB 设备驱动或第二阶段传输。
+- 本次测试未修改 NAND/SD。
+
+## 当时的下一步实验
+
+rom_ddr.bin 包含 UART 命令循环。发送小写 a（DMC0），等待 "Sample complete"，再发送小写 b（DMC1）。分别在测试基址的 0、16、32、64、128、256 MiB 偏移写入并恢复六个 32 位采样字。若采样地址均无镜像，按地址顺序预期为 0xA11A0000 至 0xA11A0005。稀疏采样不代表完整容量。未装内存或无效地址可能造成总线挂起；记下最后 PROBE 地址，断电进入 iROM，必要时重新加载 rom_ddr.bin。不得在运行中的 OS 或有重要 RAM 数据时使用。
+
+后续修正及完整测试见 [DDR_GEOMETRY.md](DDR_GEOMETRY.md)。
