@@ -19,12 +19,30 @@ static void reg(const char *s,uint32_t v) { out(s); hex(v); out("\r\n"); }
 static void stop(void) { for (;;) __asm__ volatile("nop"); }
 void boot_fault(void) { if(console_ready) { uint32_t a,s; __asm__ volatile("mrc p15,0,%0,c6,c0,0":"=r"(a)); __asm__ volatile("mrc p15,0,%0,c5,c0,0":"=r"(s)); out("EXCEPTION (DFAR/DFSR meaningful for data abort)\r\n"); reg("DFAR=",a); reg("DFSR=",s); } stop(); }
 static void uart(unsigned divisor,unsigned slot) {
-    wr(CLK+0x46c,R(CLK+0x46c)|0x60000u);
+    wr(CLK+0x46c,R(CLK+0x46c)|0x420000u);
     wr(0xe0200000,(R(0xe0200000)&~255u)|0x22u);
     wr(UART+4,0); wr(UART+8,0); wr(UART+12,0); wr(UART,3);
     wr(UART+0x28,divisor); wr(UART+0x2c,slot); wr(UART+4,5);
     console_ready=1;
 }
+#ifdef ROM_CLOCKS
+/* Verified cold iROM console, no PLL/mux/divider writes. */
+static void early_console(void) { uart(35,0); }
+static int clock_init(void) {
+    out("[1] KEEP ROM CLOCKS\r\n");
+    reg("APLL=",R(CLK+0x100)); reg("MPLL=",R(CLK+0x108));
+    reg("CLK_SRC0=",R(CLK+0x200)); reg("CLK_DIV0=",R(CLK+0x300));
+    reg("CLK_SRC6=",R(CLK+0x218)); reg("CLK_DIV6=",R(CLK+0x318));
+    if(R(CLK+0x100)!=0xa0c80601u || R(CLK+0x108)!=0xa29b0c01u ||
+       R(CLK+0x200)!=0x111u || R(CLK+0x300)!=0x14141251u ||
+       R(CLK+0x218)!=0 || R(CLK+0x318)!=0x00071000u) {
+        out("Unexpected ROM clock state; DDR init blocked\r\n"); return 0;
+    }
+    out("[1] ROM CLOCK CHECK PASS\r\n"); return 1;
+}
+#define DDR_REFRESH 0x400u
+#else
+#define DDR_REFRESH 0x618u
 /* Before changing clocks, select oscillator and use a known 24 MHz UART clock
    (PCLK_PSYS = FIN when divider is 1). This depends on the board's 24 MHz crystal. */
 static void early_console(void) {
@@ -64,23 +82,27 @@ static int clock_init(void) {
     out("[1] CLOCK OK\r\n");
     return 1;
 }
+#endif
 #ifndef SRAM_ONLY
 static void sync(void) { __asm__ volatile("dsb sy; isb" ::: "memory"); }
 static const uint32_t directcmd[12]={0x07000000,0x01000000,0x00020000,0x00030000,0x00010400,0x00000542,0x01000000,0x05000000,0x05000000,0x00000442,0x00010780,0x00010400};
 static void pause(void) { for(volatile unsigned i=0;i<1000;i++) __asm__ volatile("nop"); }
 static int dmc_init(uint32_t base,int bank) {
     out(bank?"[3] DMC1 PHY\r\n":"[2] DMC0 PHY\r\n");
+    reg("BEFORE CONCONTROL=",R(base)); reg("BEFORE MEMCONTROL=",R(base+4));
+    reg("BEFORE PHY=",R(base+0x40));
     wr(base+0x18,0x00101008); wr(base+0x1c,0x46);
     wr(base+0x18,0x0010100a); wr(base+0x18,0x0010100b);
     /* Match vendor DLL poll/force sequence, but with bounded wait. */
     if(!wait_mask(base+0x40,3,0)) {reg("PHYSTATUS TIMEOUT=",R(base+0x40));return 0;}
+    reg("PHY POLL DONE=",R(base+0x40));
     uint32_t v=R(base+0x18)|0x6a000000;
     wr(base+0x18,v); wr(base+0x18,v&~2u);
     wr(base+0x00,0x0fff1010); wr(base+0x04,0x002024c0);
     wr(base+0x08,bank?0x40e01323:0x20e01343);
     wr(base+0x0c,bank?0xffe01323:0x1ee01343);
     wr(base+0x14,0xff000000); wr(base+0x28,0xffff00ff);
-    wr(base+0x30,0x618); wr(base+0x34,0x27233309);
+    wr(base+0x30,DDR_REFRESH); wr(base+0x34,0x27233309);
     wr(base+0x38,bank?0x23240303:0x23240304); wr(base+0x3c,0x08c80232);
     for(unsigned i=0;i<16;i++) wr(base+0x60+8*i,0x00ff0000);
     for(unsigned i=0;i<16;i++) wr(base+0x64+8*i,0);
@@ -89,6 +111,7 @@ static int dmc_init(uint32_t base,int bank) {
     for(unsigned cs=0;cs<2;cs++) for(unsigned i=0;i<12;i++) {wr(base+0x10,directcmd[i]|(cs<<20));pause();}
     wr(base,R(base)|0x20); wr(base+4,(R(base+4)&~0x3fu)|0x13);
     reg("CONCONTROL=",R(base)); reg("MEMCONTROL=",R(base+4));
+    reg("TIMINGAREF=",R(base+0x30));
     reg("MEMCONFIG0=",R(base+8)); reg("PHYSTATUS=",R(base+0x40));
     return 1;
 }
@@ -136,7 +159,11 @@ static void alias_probe(uint32_t base) {
 void boot_main(void) {
     wr(0xe2700000,0);
     early_console();
+#ifdef ROM_CLOCKS
+    out("\r\nTQ210 OpenBoot v0.3 ROM CLOCKS\r\n[0] SRAM C ENTRY OK\r\n");
+#else
     out("\r\nTQ210 OpenBoot v0.1 EXPERIMENTAL\r\n[0] SRAM ENTRY OK\r\n");
+#endif
     if(!clock_init()) {out("CLOCK FAIL\r\n");stop();}
 #ifdef SRAM_ONLY
     out("SRAM TEST PASS; DDR not touched\r\n");

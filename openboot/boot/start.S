@@ -20,6 +20,46 @@ vectors:
 .section .text.start,"ax",%progbits
 reset:
     cpsid if
+#ifdef ROM_CLOCKS
+    /* Emit a stackless marker using the validated ROM-clock UART setup. */
+    ldr r0, =0xe010046c
+    ldr r1, [r0]
+    orr r1, r1, #(1 << 22)
+    orr r1, r1, #(1 << 17)
+    str r1, [r0]
+    dsb sy
+    ldr r0, =0xe2700000
+    mov r1, #0
+    str r1, [r0]
+    ldr r0, =0xe0200000
+    ldr r1, [r0]
+    bic r1, r1, #0xff
+    orr r1, r1, #0x22
+    str r1, [r0]
+    dsb sy
+    ldr r4, =0xe2900000
+    mov r1, #0
+    str r1, [r4, #4]
+    str r1, [r4, #8]
+    str r1, [r4, #12]
+    str r1, [r4, #0x2c]
+    mov r1, #3
+    str r1, [r4]
+    mov r1, #35
+    str r1, [r4, #0x28]
+    mov r1, #5
+    str r1, [r4, #4]
+    ldr r2, =0x100000
+7:  ldr r1, [r4, #0x10]
+    tst r1, #2
+    bne 8f
+    subs r2, r2, #1
+    bne 7b
+    b 9f
+8:  mov r1, #0x3e
+    strb r1, [r4, #0x20]
+9:
+#endif
     cps #0x13
     ldr sp, =__stack_top
     /* ROM handoff must be physical, uncached for data. Do not turn off an
