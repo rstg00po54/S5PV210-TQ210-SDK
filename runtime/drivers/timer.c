@@ -1,18 +1,18 @@
 #include "timebase.h"
 
-/* S5PV210 PWM timer 0, VIC0 input 21. Exclusive bare-metal ownership. */
+/* S5PV210 PWM timer 1, VIC0 input 22. Exclusive bare-metal ownership. */
 #define PWM_BASE 0xe2500000u
 #define PWM(off) MMIO32(PWM_BASE + (off))
 #define TCFG0 0x00u
 #define TCFG1 0x04u
 #define TCON 0x08u
-#define TCNTB0 0x0cu
-#define TCMPB0 0x10u
-#define TCNTO0 0x14u
+#define TCNTB1 0x18u
+#define TCMPB1 0x1cu
+#define TCNTO1 0x20u
 #define TINT_CSTAT 0x44u
-#define T0_ENABLE 1u
-#define T0_PENDING (1u << 5)
-#define T0_IRQ (1u << 21)
+#define T1_ENABLE (1u << 1)
+#define T1_PENDING (1u << 6)
+#define T1_IRQ (1u << 22)
 #define VIC_BASE(i) (0xf2000000u + ((i) << 20))
 #define VIC(i,off) MMIO32(VIC_BASE(i) + (off))
 #define IRQ_STATUS 0x00u
@@ -25,7 +25,11 @@
 #define VECTOR_PRIORITY 0x200u
 #define VECTOR_ADDR 0xf00u
 #define PWM_ENABLE_MASK 31u
-#define T0_CONTROL_MASK 31u
+#define T1_CONTROL_MASK (15u << 8)
+#define T1_START (1u << 8)
+#define T1_UPDATE (1u << 9)
+#define T1_RELOAD (1u << 11)
+#define T1_MUX_MASK (15u << 4)
 
 static volatile uint32_t ticks;
 static volatile unsigned active;
@@ -47,11 +51,11 @@ static uint32_t divide_round(uint32_t n, uint32_t d)
 }
 
 /* Preserve other channels' enable bits; never echo their W1C pending bits. */
-static void timer0_ack(int enabled)
+static void timer1_ack(int enabled)
 {
     uint32_t enables = PWM(TINT_CSTAT) & PWM_ENABLE_MASK;
-    PWM(TINT_CSTAT) = (enables & ~T0_ENABLE) |
-                      (enabled ? T0_ENABLE : 0u) | T0_PENDING;
+    PWM(TINT_CSTAT) = (enables & ~T1_ENABLE) |
+                      (enabled ? T1_ENABLE : 0u) | T1_PENDING;
     dsb();
 }
 
@@ -103,32 +107,32 @@ static int prepare(void)
     console_reg("TCFG0 inherited=", tcfg0);
     console_reg("TCFG1 inherited=", tcfg1);
     console_reg("TINT_CSTAT inherited=", PWM(TINT_CSTAT));
-    if (tcon & 1u) {
-        console_write("Timer0 already running; refusing takeover.\r\n");
+    if (tcon & T1_START) {
+        console_write("Timer1 already running; refusing takeover.\r\n");
         return -1;
     }
     /* Never touch shared prescalers, even if their other channels are idle.
-       Timer0 uses prescaler0 and its own mux (/1 on S5PV210).
+       Timer1 uses prescaler0 and its own mux (/1 on S5PV210).
        The nominal PCLK_PSYS/100 Hz numerator is 666667. */
     uint32_t prescaler = (tcfg0 & 255u) + 1u;
     uint32_t reload = divide_round(666667u, prescaler);
-    console_reg("TIMER0 prescaler=", prescaler);
-    console_reg("TIMER0 reload=", reload);
-    PWM(TCON) &= ~T0_CONTROL_MASK;
-    timer0_ack(0);
-    PWM(TCFG1) = tcfg1 & ~15u;
-    PWM(TCNTB0) = reload;
-    PWM(TCMPB0) = 0;
-    PWM(TCON) = (PWM(TCON) & ~T0_CONTROL_MASK) | 2u;
-    PWM(TCON) &= ~T0_CONTROL_MASK;
+    console_reg("TIMER1 prescaler=", prescaler);
+    console_reg("TIMER1 reload=", reload);
+    PWM(TCON) &= ~T1_CONTROL_MASK;
+    timer1_ack(0);
+    PWM(TCFG1) = tcfg1 & ~T1_MUX_MASK;
+    PWM(TCNTB1) = reload;
+    PWM(TCMPB1) = 0;
+    PWM(TCON) = (PWM(TCON) & ~T1_CONTROL_MASK) | T1_UPDATE;
+    PWM(TCON) &= ~T1_CONTROL_MASK;
     dsb();
     return 0;
 }
 
 static void stop_hw(void)
 {
-    PWM(TCON) &= ~T0_CONTROL_MASK;
-    timer0_ack(0);
+    PWM(TCON) &= ~T1_CONTROL_MASK;
+    timer1_ack(0);
     dsb();
 }
 
@@ -140,28 +144,28 @@ int timer_probe(void)
     }
     console_reg("TCFG0=", PWM(TCFG0));
     console_reg("TCFG1=", PWM(TCFG1));
-    console_reg("TCNTB0=", PWM(TCNTB0));
+    console_reg("TCNTB1=", PWM(TCNTB1));
     /* CPU IRQ is masked by prepare(); enable the peripheral's pending source
        for this polling test, without enabling a VIC line or CPU IRQ. */
-    timer0_ack(1);
-    PWM(TCON) |= 9u;
+    timer1_ack(1);
+    PWM(TCON) |= T1_START | T1_RELOAD;
     dsb();
-    uint32_t first = PWM(TCNTO0);
-    console_reg("TCNTO0 initial=", first);
+    uint32_t first = PWM(TCNTO1);
+    console_reg("TCNTO1 initial=", first);
     for (unsigned i = 0; i < 3u; ++i) {
         unsigned timeout = 10000000u;
-        while (!(PWM(TINT_CSTAT) & T0_PENDING) && --timeout) {
+        while (!(PWM(TINT_CSTAT) & T1_PENDING) && --timeout) {
             __asm__ volatile("nop");
         }
         if (!timeout) {
-            console_reg("TCNTO0 timeout=", PWM(TCNTO0));
+            console_reg("TCNTO1 timeout=", PWM(TCNTO1));
             console_reg("TINT_CSTAT=", PWM(TINT_CSTAT));
             stop_hw();
             console_write("TIMER POLL FAIL\r\n");
             return -1;
         }
-        timer0_ack(1);
-        if (PWM(TINT_CSTAT) & T0_PENDING) {
+        timer1_ack(1);
+        if (PWM(TINT_CSTAT) & T1_PENDING) {
             stop_hw();
             console_write("TIMER POLL FAIL: pending did not clear\r\n");
             return -1;
@@ -169,7 +173,7 @@ int timer_probe(void)
     }
     stop_hw();
     probed = 1;
-    console_write("TIMER POLL PASS: 3 pending events\r\n");
+    console_write("TIMER POLL PASS: Timer1, 3 pending events\r\n");
     return 0;
 }
 
@@ -185,20 +189,20 @@ void timer_start(void)
     vic_disable_all();
     ticks = 0;
     VIC(0, PRIORITY_MASK) = 0xffffu;
-    VIC(0, VECTOR_SLOT + 21u*4u) = 21u;
-    VIC(0, VECTOR_PRIORITY + 21u*4u) = 0u;
-    timer0_ack(1);
-    VIC(0, INT_ENABLE) = T0_IRQ;
+    VIC(0, VECTOR_SLOT + 22u*4u) = 22u;
+    VIC(0, VECTOR_PRIORITY + 22u*4u) = 0u;
+    timer1_ack(1);
+    VIC(0, INT_ENABLE) = T1_IRQ;
     dsb();
-    if (!(VIC(0, INT_ENABLE) & T0_IRQ)) {
+    if (!(VIC(0, INT_ENABLE) & T1_IRQ)) {
         stop_hw();
         console_write("VIC enable FAIL\r\n");
         return;
     }
     active = 1;
-    PWM(TCON) |= 9u;
+    PWM(TCON) |= T1_START | T1_RELOAD;
     dsb();
-    console_write("Timer0 IRQ enabled; use ticks to check progress.\r\n");
+    console_write("Timer1 IRQ enabled; use ticks to check progress.\r\n");
     __asm__ volatile("cpsie i" ::: "memory");
     isb();
 }
@@ -210,7 +214,7 @@ void timer_stop(void)
         return;
     }
     irq_mask();
-    VIC(0, INT_CLEAR) = T0_IRQ;
+    VIC(0, INT_CLEAR) = T1_IRQ;
     stop_hw();
     active = 0;
     dsb();
@@ -226,8 +230,8 @@ int timer_running(void)
 void timer_info(void)
 {
     uint32_t snapshot = ticks;
-    console_write(active ? "Timer0: RUNNING (~100 Hz nominal)\r\n" :
-                           "Timer0: STOPPED\r\n");
+    console_write(active ? "Timer1: RUNNING (~100 Hz nominal)\r\n" :
+                           "Timer1: STOPPED\r\n");
     console_write("Ticks: ");
     console_dec(snapshot);
     console_write("\r\n");
@@ -236,12 +240,12 @@ void timer_info(void)
 void irq_dispatch(void)
 {
     uint32_t status = VIC(0, IRQ_STATUS);
-    if (active && status == T0_IRQ &&
+    if (active && status == T1_IRQ &&
         !(VIC(1, IRQ_STATUS) | VIC(2, IRQ_STATUS) | VIC(3, IRQ_STATUS)) &&
-        (PWM(TINT_CSTAT) & T0_PENDING)) {
+        (PWM(TINT_CSTAT) & T1_PENDING)) {
         /* Read current vector to acknowledge, clear peripheral, then EOI. */
         (void)VIC(0, VECTOR_ADDR);
-        timer0_ack(1);
+        timer1_ack(1);
         ++ticks;
         VIC(0, VECTOR_ADDR) = 0u;
         dsb();

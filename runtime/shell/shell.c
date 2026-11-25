@@ -35,8 +35,8 @@ static void help(void)
                   "memtest    Test allocated scratch pages\r\n"
                   "benchmark  PMU memory test (1 MiB)\r\n"
                   "timer probe Test PWM pending events\r\n"
-                  "timer on   Start Timer0 IRQ after probe\r\n"
-                  "timer off  Stop Timer0 IRQ\r\n"
+                  "timer on   Start Timer1 IRQ after probe\r\n"
+                  "timer off  Stop Timer1 IRQ\r\n"
                   "ticks      Show timer tick count\r\n"
                   "autotest   Run automatic MMU/cache/DDR/timer tests\r\n"
                   "halt       Stop; cold power-cycle to restart\r\n");

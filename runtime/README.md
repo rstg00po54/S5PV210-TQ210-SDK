@@ -83,20 +83,20 @@
 
 主机测试的 Cache 同步函数为空实现，只验证分配逻辑和软件读写，不代表目标 CPU、DDR、MMU 或 Cache 实机成功。GNU ARM 工具链构建及目标板验证仍待进行。
 
-## v0.2：PMU、PWM Timer0 与 VIC 中断实验
+## v0.2：PMU、PWM Timer1 与 VIC 中断实验
 
 v0.1 实机结果见 [HW_VALIDATION_V01.md](HW_VALIDATION_V01.md)。本版保留启动、DDR、物理页分配器和时钟参数，新增实验性 PMU 及单一 IRQ 源，未实现任务调度。上板前重新构建安全版。启动后依次：
 
     autotest
 
-autotest 自动执行 PMU 基线、开启 MMU、MMU-only 性能测试、开启 D-Cache、Cache 性能测试、页分配器/DDR 测试和 Timer0 轮询探测；遇到失败立即停止并汇总。不会自动启动持续中断。若从 runtime-safe 启动，完整测试三种状态；若从自动开启 MMU/Cache 的 runtime 启动，无法回测关闭状态，会明确将相应阶段标记为 SKIP。若需要完整对比，请冷启动并加载 runtime-safe.bin。
+autotest 自动执行 PMU 基线、开启 MMU、MMU-only 性能测试、开启 D-Cache、Cache 性能测试、页分配器/DDR 测试和 Timer1 轮询探测；遇到失败立即停止并汇总。不会自动启动持续中断。若从 runtime-safe 启动，完整测试三种状态；若从自动开启 MMU/Cache 的 runtime 启动，无法回测关闭状态，会明确将相应阶段标记为 SKIP。若需要完整对比，请冷启动并加载 runtime-safe.bin。
 
 benchmark 分配自身 1 MiB 临时页，使用 PMU CCNT 全速周期计数，不包含串口输出。写入计时包含 clean/invalidate（Cache 开启时），读计时包含数据校验；16 KiB 读取为附加测量，不保证热缓存。报告十六进制周期数和错误数，不是纯 DDR 峰值带宽。三种状态应在同次安全版启动中比较。测量前必须停止 timer。PMU 溢出时结果无效。
 
-timer probe 仅在 MMU、D-Cache 已打开且 ROM 时钟配置匹配时运行，开启 PWM 门控（CLK_GATE_IP3 bit23），Timer0 输入使用名义 PCLK_PSYS 66.667 MHz、继承预分频器 0 的实际设置、独立分频 1，按该预分频值计算约 100 Hz 重载（无除法库依赖），实际频率未校准。保持 TCFG0 和其他定时器控制字段不变；若 Timer0 本身已运行则拒绝接管。先在 CPU IRQ 屏蔽、不使能新 VIC 线路的情况下使能 Timer0 外设中断源并轮询三次 pending，验证 W1C 清除；结束时关闭 Timer0 及其外设中断，保留其他通道中断使能。若轮询失败不要启用 IRQ。timer on 仅在 probe 通过后运行，独占四个 VIC，屏蔽并清除其他源，配置 VIC0 input 21，启用 Timer0。IRQ 入口保存 r0-r3、r12、lr，C 分发器确认来源，清除 PWM W1C pending 后写 VIC EOI，返回时恢复 SPSR。FIQ 保持屏蔽。未知 IRQ 停机。ticks 输出累计 32 位计数；间隔约 1 秒应增加约 100（需要实际测量）。timer off 屏蔽 IRQ 并停止 Timer0，保留计数。仅供独立实验，不与其他 PWM/VIC 驱动共存。
+timer probe 仅在 MMU、D-Cache 已打开且 ROM 时钟配置匹配时运行，开启 PWM 门控（CLK_GATE_IP3 bit23），Timer1 输入使用名义 PCLK_PSYS 66.667 MHz、继承预分频器 0 的实际设置、独立分频 1，按该预分频值计算约 100 Hz 重载（无除法库依赖），实际频率未校准。保持 TCFG0 和其他定时器控制字段不变；若 Timer1 本身已运行则拒绝接管。先在 CPU IRQ 屏蔽、不使能新 VIC 线路的情况下使能 Timer1 外设中断源并轮询三次 pending，验证 W1C 清除；结束时关闭 Timer1 及其外设中断，保留其他通道中断使能。若轮询失败不要启用 IRQ。timer on 仅在 probe 通过后运行，独占四个 VIC，屏蔽并清除其他源，配置 VIC0 input 22，启用 Timer1。IRQ 入口保存 r0-r3、r12、lr，C 分发器确认来源，清除 PWM W1C pending 后写 VIC EOI，返回时恢复 SPSR。FIQ 保持屏蔽。未知 IRQ 停机。ticks 输出累计 32 位计数；间隔约 1 秒应增加约 100（需要实际测量）。timer off 屏蔽 IRQ 并停止 Timer1，保留计数。仅供独立实验，不与其他 PWM/VIC 驱动共存。
 
 参考原厂 `bare-metal/no-os-examples/src/16.timer/{timer.c,int.c,int.h}` 和 Linux 3.0.8 的 `arch/arm/mach-s5pv210/clock.c` 中 timers 时钟门控。v0.2 尚未完成交叉编译、实机验证。v0.1 本地构建记录适用于旧提交而非本版。OpenBoot 不变。
 
-## v0.2 自动测试实机结果与 Timer0 修订
+## v0.2 自动测试实机结果与 Timer1 修订
 
-[HW_VALIDATION_V02.md](HW_VALIDATION_V02.md) 记录 6 项通过、Timer0 保护拒绝的首轮测试。旧驱动误将 Timer1–4 任一运行状态视为共享分频冲突；本次修订继承原预分频值、打印原始 TCON/TCFG0/TCFG1/TINT_CSTAT，只配置 Timer0，保留其他通道中断使能和 pending 位。若 Timer0 自身已启动，仍停止并报告，不能仅凭其他通道运行就确定其来源。新修订尚未在板上验证；如失败请提供完整日志。定时器 IRQ 测试仍需独立执行，autotest 不会自动打开 CPU IRQ。
+[HW_VALIDATION_V02.md](HW_VALIDATION_V02.md) 记录两轮实机测试：PMU、MMU、D-Cache 和内存测试均通过；Timer0 未执行实际计数测试，因为继承状态显示 Timer0 已运行。现选择空闲 Timer1（TCON bit8、VIC0 input22），不修改 Timer0/4 的运行状态或共享 prescaler0。Timer1 的独立 mux、计数寄存器和中断位单独配置；若 Timer1 已运行则拒绝接管。轮询成功之后才允许手动启用 IRQ，仍由独占 VIC 驱动管理所有中断控制器。新修订待实机验证；autotest 不打开 CPU IRQ。遇失败记录完整串口日志。

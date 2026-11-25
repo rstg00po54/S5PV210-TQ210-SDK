@@ -58,7 +58,7 @@ void runtime_autotest(void)
 
     if (timer_running()) {
         ++failed;
-        console_write("[AUTO] FAIL: stop Timer0 before autotest\r\n");
+        console_write("[AUTO] FAIL: stop Timer1 before autotest\r\n");
         report(0);
         return;
     }
@@ -108,7 +108,7 @@ void runtime_autotest(void)
         report(0);
         return;
     }
-    if (run_stage("PWM Timer0 polling probe (no IRQ enabled)", timer_probe)) {
+    if (run_stage("PWM Timer1 polling probe (no IRQ enabled)", timer_probe)) {
         report(0);
         return;
     }
