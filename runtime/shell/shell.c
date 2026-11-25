@@ -1,5 +1,6 @@
 #include "memory.h"
 #include "timebase.h"
+#include "selftest.h"
 
 static uintptr_t held;
 static unsigned held_pages;
@@ -37,6 +38,7 @@ static void help(void)
                   "timer on   Start Timer0 IRQ after probe\r\n"
                   "timer off  Stop Timer0 IRQ\r\n"
                   "ticks      Show timer tick count\r\n"
+                  "autotest   Run automatic MMU/cache/DDR/timer tests\r\n"
                   "halt       Stop; cold power-cycle to restart\r\n");
 }
 static void execute(char *line)
@@ -97,6 +99,8 @@ static void execute(char *line)
         timer_stop();
     } else if (equal(line, "ticks")) {
         timer_info();
+    } else if (equal(line, "autotest")) {
+        runtime_autotest();
     } else if (equal(line, "halt")) {
         console_write("Halted. Cold power-cycle to restart.\r\n");
         runtime_halt();

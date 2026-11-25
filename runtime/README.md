@@ -87,18 +87,9 @@
 
 v0.1 实机结果见 [HW_VALIDATION_V01.md](HW_VALIDATION_V01.md)。本版保留启动、DDR、物理页分配器和时钟参数，新增实验性 PMU 及单一 IRQ 源，未实现任务调度。上板前重新构建安全版。启动后依次：
 
-    benchmark
-    mmu on
-    benchmark
-    cache on
-    benchmark
-    memtest
-    timer probe
-    timer on
-    ticks
-    ticks
-    timer off
-    memtest
+    autotest
+
+autotest 自动执行 PMU 基线、开启 MMU、MMU-only 性能测试、开启 D-Cache、Cache 性能测试、页分配器/DDR 测试和 Timer0 轮询探测；遇到失败立即停止并汇总。不会自动启动持续中断。若从 runtime-safe 启动，完整测试三种状态；若从自动开启 MMU/Cache 的 runtime 启动，无法回测关闭状态，会明确将相应阶段标记为 SKIP。若需要完整对比，请冷启动并加载 runtime-safe.bin。
 
 benchmark 分配自身 1 MiB 临时页，使用 PMU CCNT 全速周期计数，不包含串口输出。写入计时包含 clean/invalidate（Cache 开启时），读计时包含数据校验；16 KiB 读取为附加测量，不保证热缓存。报告十六进制周期数和错误数，不是纯 DDR 峰值带宽。三种状态应在同次安全版启动中比较。测量前必须停止 timer。PMU 溢出时结果无效。
 

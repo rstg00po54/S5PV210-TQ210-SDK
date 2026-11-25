@@ -96,12 +96,12 @@ static void stop_hw(void)
     dsb();
 }
 
-void timer_probe(void)
+int timer_probe(void)
 {
-    if (prepare()) {
-        return;
-    }
     probed = 0;
+    if (prepare()) {
+        return -1;
+    }
     console_reg("TCFG0=", PWM(TCFG0));
     console_reg("TCFG1=", PWM(TCFG1));
     console_reg("TCNTB0=", PWM(TCNTB0));
@@ -119,7 +119,7 @@ void timer_probe(void)
             console_reg("TINT_CSTAT=", PWM(TINT_CSTAT));
             stop_hw();
             console_write("TIMER POLL FAIL\r\n");
-            return;
+            return -1;
         }
         PWM(TINT_CSTAT) = T0_PENDING;
         dsb();
@@ -127,6 +127,7 @@ void timer_probe(void)
     stop_hw();
     probed = 1;
     console_write("TIMER POLL PASS: 3 pending events\r\n");
+    return 0;
 }
 
 void timer_start(void)

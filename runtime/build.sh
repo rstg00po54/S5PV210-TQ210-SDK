@@ -13,7 +13,7 @@ else
     objdump=llvm-objdump
     target="--target=arm-none-eabi -fuse-ld=lld"
 fi
-sources="arch/arm/start.S arch/arm/cpu.c arch/arm/benchmark.c drivers/uart.c drivers/timer.c mm/mmu.c mm/pages.c kernel/main.c shell/shell.c"
+sources="arch/arm/start.S arch/arm/cpu.c arch/arm/benchmark.c drivers/uart.c drivers/timer.c mm/mmu.c mm/pages.c kernel/main.c kernel/selftest.c shell/shell.c"
 for variant in runtime runtime-safe; do
     defs=
     if [ "$variant" = runtime-safe ]; then

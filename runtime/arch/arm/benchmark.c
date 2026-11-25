@@ -32,16 +32,16 @@ static void pmu_stop(void)
     isb();
 }
 
-void benchmark_run(void)
+int benchmark_run(void)
 {
     if (timer_running()) {
         console_write("Stop timer before benchmark.\r\n");
-        return;
+        return -1;
     }
     uintptr_t a = page_alloc(BENCH_PAGES);
     if (!a) {
         console_write("BENCH allocation FAIL\r\n");
-        return;
+        return -1;
     }
     pmu_start();
     uint32_t t = cycles();
@@ -52,7 +52,7 @@ void benchmark_run(void)
         pmu_stop();
         (void)page_free(a, BENCH_PAGES);
         console_write("PMU counter not advancing\r\n");
-        return;
+        return -1;
     }
 
     volatile uint32_t *p = (volatile uint32_t *)a;
@@ -94,7 +94,12 @@ void benchmark_run(void)
     }
     if (page_free(a, BENCH_PAGES)) {
         console_write("BENCH free FAIL\r\n");
-        return;
+        return -1;
     }
-    console_write(errors || (overflow & PMU_CYCLE) ? "BENCH FAIL\r\n" : "BENCH PASS\r\n");
+    if (errors || (overflow & PMU_CYCLE)) {
+        console_write("BENCH FAIL\r\n");
+        return -1;
+    }
+    console_write("BENCH PASS\r\n");
+    return 0;
 }
