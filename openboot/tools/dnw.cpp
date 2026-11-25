@@ -43,41 +43,77 @@ int main(int argc, char** argv)
                 selftest();
                 return 0;
             }
-            else if (a == "--dry-run")dry = true;
-            else if (a == "--full-checksum")full = true;
-            else if (a == "--join-tail")join = true;
-            else if (a == "--pad-vendor-size")pad = true;
-            else if (a == "--no-reconfigure")reconfig = false;
-            else if (!a.empty() && a[0] != '-' && path.empty())path = a;
-            else throw std::runtime_error("unknown argument: "+a);
+            else if (a == "--dry-run")
+            {
+                dry = true;
+            }
+            else if (a == "--full-checksum")
+            {
+                full = true;
+            }
+            else if (a == "--join-tail")
+            {
+                join = true;
+            }
+            else if (a == "--pad-vendor-size")
+            {
+                pad = true;
+            }
+            else if (a == "--no-reconfigure")
+            {
+                reconfig = false;
+            }
+            else if (!a.empty() && a[0] != '-' && path.empty())
+            {
+                path = a;
+            }
+            else
+            {
+                throw std::runtime_error("unknown argument: "+a);
+            }
         }
         if (path.empty())
         {
-            std::cout<<"Usage: tq210-dnw IMAGE [--dry-run] [--full-checksum] [--join-tail] [--pad-vendor-size] [--no-reconfigure]\n       tq210-dnw --selftest\n       tq210-dnw --bulk-test\n       tq210-dnw --load DDR_IMAGE\n       tq210-dnw --boot SRAM_LOADER DDR_IMAGE\n       tq210-dnw --handoff-test SRAM_LOADER\n       tq210-dnw --dma-boot SRAM_LOADER DDR_IMAGE\n       tq210-dnw --dma-test SRAM_LOADER\n";
+            std::cout << "Usage: tq210-dnw IMAGE [--dry-run] [--full-checksum] [--join-tail] [--pad-vendor-size] [--no-reconfigure]\n       tq210-dnw --selftest\n       tq210-dnw --bulk-test\n       tq210-dnw --load DDR_IMAGE\n       tq210-dnw --boot SRAM_LOADER DDR_IMAGE\n       tq210-dnw --handoff-test SRAM_LOADER\n       tq210-dnw --dma-boot SRAM_LOADER DDR_IMAGE\n       tq210-dnw --dma-test SRAM_LOADER\n";
             return 1;
         }
         std::ifstream f(path, std::ios::binary);
-        if (!f)throw std::runtime_error("cannot open image");
+        if (!f)
+        {
+            throw std::runtime_error("cannot open image");
+        }
         Bytes b((std::istreambuf_iterator<char>(f)), {});
-        if (b.empty() || b.size()>16368)throw std::runtime_error("invalid image length");
+        if (b.empty() || b.size()>16368)
+        {
+            throw std::runtime_error("invalid image length");
+        }
         if (pad)
         {
-            if (b.size()>11168)throw std::runtime_error("cannot pad to vendor size");
+            if (b.size()>11168)
+            {
+                throw std::runtime_error("cannot pad to vendor size");
+            }
             b.resize(11168, 0);
         }
         auto p = packets(b, 0xd0020010, full, join);
         auto& t = p.back();
-        unsigned sum = unsigned(t[t.size()-2])|(unsigned(t.back())<<8);
+        unsigned sum = unsigned(t[t.size()-2]) | (unsigned(t.back()) << 8);
         std::printf("SRAM address=0xd0020010 payload=%zu wire=%zu checksum=0x%04x\n", b.size(), b.size()+10, sum);
-        std::cout<<"Transfers:";
-        for (auto& x:p)std::cout<<" "<<x.size();
-        std::cout<<"\n";
-        if (!dry) send(p, reconfig);
+        std::cout << "Transfers:";
+        for (auto& x:p)
+        {
+            std::cout << " " << x.size();
+        }
+        std::cout << "\n";
+        if (!dry)
+        {
+            send(p, reconfig);
+        }
         return 0;
     }
     catch (const std::exception& e)
     {
-        std::cerr<<"ERROR: "<<e.what()<<"\n";
+        std::cerr << "ERROR: " << e.what() << "\n";
         return 1;
     }
 }

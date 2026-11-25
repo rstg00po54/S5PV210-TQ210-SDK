@@ -8,7 +8,10 @@
 static const uint32_t directcmd[12] = {0x07000000, 0x01000000, 0x00020000, 0x00030000, 0x00010400, 0x00000542, 0x01000000, 0x05000000, 0x05000000, 0x00000442, 0x00010780, 0x00010400};
 static void pause(void)
 {
-    for (volatile unsigned i = 0; i<1000; i++) __asm__ volatile("nop");
+    for (volatile unsigned i = 0; i < 1000; i++)
+    {
+        __asm__ volatile("nop");
+    }
 }
 int dmc_init(uint32_t base, int bank)
 {
@@ -27,7 +30,7 @@ int dmc_init(uint32_t base, int bank)
         return 0;
     }
     console_reg("PHY POLL DONE=", MMIO32(base + DMC_PHYSTATUS));
-    uint32_t v = MMIO32(base + DMC_PHYCONTROL0)|0x6a000000;
+    uint32_t v = MMIO32(base + DMC_PHYCONTROL0) | 0x6a000000;
     mmio_write32(base + DMC_PHYCONTROL0, v);
     mmio_write32(base + DMC_PHYCONTROL0, v&~2u);
     mmio_write32(base + DMC_CONCONTROL, 0x0fff1010);
@@ -46,17 +49,26 @@ int dmc_init(uint32_t base, int bank)
     mmio_write32(base + DMC_TIMINGROW, 0x27233309);
     mmio_write32(base + DMC_TIMINGDATA, bank ? 0x23240303:0x23240304);
     mmio_write32(base + DMC_TIMINGPOWER, 0x08c80232);
-    for (unsigned i = 0; i<16; i++) mmio_write32(base + DMC_QOSCONTROL0+8*i, 0x00ff0000);
-    for (unsigned i = 0; i<16; i++) mmio_write32(base + DMC_QOSCONFIG0+8*i, 0);
+    for (unsigned i = 0; i < 16; i++)
+    {
+        mmio_write32(base + DMC_QOSCONTROL0+8*i, 0x00ff0000);
+    }
+    for (unsigned i = 0; i < 16; i++)
+    {
+        mmio_write32(base + DMC_QOSCONFIG0+8*i, 0);
+    }
     console_write(bank ? "[3] DMC1 DDR2 commands\r\n":"[2] DMC0 DDR2 commands\r\n");
     /* Explicit gaps are conservative; original emitted consecutive writes. */
-    for (unsigned cs = 0; cs<2; cs++) for (unsigned i = 0; i<12; i++)
+    for (unsigned cs = 0; cs < 2; cs++)
     {
-        mmio_write32(base + DMC_DIRECTCMD, directcmd[i]|(cs<<20));
-        pause();
+        for (unsigned i = 0; i < 12; i++)
+        {
+            mmio_write32(base + DMC_DIRECTCMD, directcmd[i] | (cs << 20));
+            pause();
+        }
     }
-    mmio_write32(base, MMIO32(base)|0x20);
-    mmio_write32(base + DMC_MEMCONTROL, (MMIO32(base + DMC_MEMCONTROL)&~0x3fu)|0x13);
+    mmio_write32(base, MMIO32(base) | 0x20);
+    mmio_write32(base + DMC_MEMCONTROL, (MMIO32(base + DMC_MEMCONTROL)&~0x3fu) | 0x13);
     console_reg("CONCONTROL=", MMIO32(base));
     console_reg("MEMCONTROL=", MMIO32(base + DMC_MEMCONTROL));
     console_reg("TIMINGAREF=", MMIO32(base + DMC_TIMINGAREF));
@@ -67,6 +79,8 @@ int dmc_init(uint32_t base, int bank)
 void drive_strength(void)
 {
     for (uint32_t a = 0xe02003cc; a <= 0xe02005ec; a += 0x20)
-    mmio_write32(a, (a == 0xe02004cc || a == 0xe02005ec) ? 0x3fff:0xffff);
+    {
+        mmio_write32(a, (a == 0xe02004cc || a == 0xe02005ec) ? 0x3fff:0xffff);
+    }
 }
 #endif

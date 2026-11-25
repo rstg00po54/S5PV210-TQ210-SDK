@@ -15,8 +15,8 @@ int clock_init(void)
     console_reg("CLK_SRC6=", MMIO32(S5PV210_CLK_BASE + CLK_SRC6));
     console_reg("CLK_DIV6=", MMIO32(S5PV210_CLK_BASE + CLK_DIV6));
     if (MMIO32(S5PV210_CLK_BASE + CLK_APLL_CON0) != 0xa0c80601u || MMIO32(S5PV210_CLK_BASE + CLK_MPLL_CON) != 0xa29b0c01u ||
-    MMIO32(S5PV210_CLK_BASE + CLK_SRC0) != 0x111u || MMIO32(S5PV210_CLK_BASE + CLK_DIV0) != 0x14141251u ||
-    MMIO32(S5PV210_CLK_BASE + CLK_SRC6) != 0 || MMIO32(S5PV210_CLK_BASE + CLK_DIV6) != 0x00071000u)
+        MMIO32(S5PV210_CLK_BASE + CLK_SRC0) != 0x111u || MMIO32(S5PV210_CLK_BASE + CLK_DIV0) != 0x14141251u ||
+        MMIO32(S5PV210_CLK_BASE + CLK_SRC6) != 0 || MMIO32(S5PV210_CLK_BASE + CLK_DIV6) != 0x00071000u)
     {
         console_write("Unexpected ROM clock state; DDR init blocked\r\n");
         return 0;
@@ -31,18 +31,27 @@ void early_console(void)
 {
     /* Establish known conservative dividers before bypassing PLLs. */
     mmio_write32(S5PV210_CLK_BASE + CLK_DIV0, 0x14131440);
-    if (!mmio_wait_mask(S5PV210_CLK_BASE + CLK_DIV_STAT0, 0xffu, 0)) boot_halt();
+    if (!mmio_wait_mask(S5PV210_CLK_BASE + CLK_DIV_STAT0, 0xffu, 0))
+    {
+        boot_halt();
+    }
     mmio_write32(S5PV210_CLK_BASE + CLK_SRC0, 0);
-    for (volatile unsigned i = 0; i<10000; i++) __asm__ volatile("nop");
+    for (volatile unsigned i = 0; i < 10000; i++)
+    {
+        __asm__ volatile("nop");
+    }
     mmio_write32(S5PV210_CLK_BASE + CLK_DIV0, 0);
-    if (!mmio_wait_mask(S5PV210_CLK_BASE + CLK_DIV_STAT0, 0xffu, 0)) boot_halt();
+    if (!mmio_wait_mask(S5PV210_CLK_BASE + CLK_DIV_STAT0, 0xffu, 0))
+    {
+        boot_halt();
+    }
     /* 24 MHz / (16 * 13) ~115384 baud. */
     uart_init(12, 0);
 }
 static int pll(uint32_t off, uint32_t val)
 {
     mmio_write32(S5PV210_CLK_BASE+off, val);
-    return mmio_wait_mask(S5PV210_CLK_BASE+off, 1u<<29, 1u<<29);
+    return mmio_wait_mask(S5PV210_CLK_BASE+off, 1u << 29, 1u << 29);
 }
 int clock_init(void)
 {
@@ -68,13 +77,19 @@ int clock_init(void)
         return 0;
     }
     /* Avoid logging during divider/mux changes: UART timing changes too. */
-    (void)mmio_wait_mask(S5PV210_UART0_BASE + UART_UTRSTAT, 4, 4);
+    (void) mmio_wait_mask(S5PV210_UART0_BASE + UART_UTRSTAT, 4, 4);
     mmio_write32(S5PV210_CLK_BASE + CLK_DIV0, 0x14131440);
-    if (!mmio_wait_mask(S5PV210_CLK_BASE + CLK_DIV_STAT0, 0xffu, 0)) return 0;
+    if (!mmio_wait_mask(S5PV210_CLK_BASE + CLK_DIV_STAT0, 0xffu, 0))
+    {
+        return 0;
+    }
     mmio_write32(S5PV210_CLK_BASE + CLK_SRC6, 0);
     mmio_write32(S5PV210_CLK_BASE + CLK_DIV6, 0);
     mmio_write32(S5PV210_CLK_BASE + CLK_SRC0, 0x111);
-    for (volatile unsigned i = 0; i<10000; i++) __asm__ volatile("nop");
+    for (volatile unsigned i = 0; i < 10000; i++)
+    {
+        __asm__ volatile("nop");
+    }
     /* Known-working UART0 setup from vendor-initialized CoreB probe. */
     uart_init(35, 1);
     console_reg("APLL=", MMIO32(S5PV210_CLK_BASE + CLK_APLL_CON0));
