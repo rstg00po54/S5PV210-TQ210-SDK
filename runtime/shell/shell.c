@@ -1,4 +1,5 @@
 #include "memory.h"
+#include "timebase.h"
 
 static uintptr_t held;
 static unsigned held_pages;
@@ -31,6 +32,11 @@ static void help(void)
                   "alloc N    Allocate N contiguous 4 KiB pages (1..4096)\r\n"
                   "free       Release the shell allocation\r\n"
                   "memtest    Test allocated scratch pages\r\n"
+                  "benchmark  PMU memory test (1 MiB)\r\n"
+                  "timer probe Test PWM pending events\r\n"
+                  "timer on   Start Timer0 IRQ after probe\r\n"
+                  "timer off  Stop Timer0 IRQ\r\n"
+                  "ticks      Show timer tick count\r\n"
                   "halt       Stop; cold power-cycle to restart\r\n");
 }
 static void execute(char *line)
@@ -81,6 +87,16 @@ static void execute(char *line)
         } else {
             console_write("No shell allocation or free failed\r\n");
         }
+    } else if (equal(line, "benchmark")) {
+        benchmark_run();
+    } else if (equal(line, "timer probe")) {
+        timer_probe();
+    } else if (equal(line, "timer on")) {
+        timer_start();
+    } else if (equal(line, "timer off")) {
+        timer_stop();
+    } else if (equal(line, "ticks")) {
+        timer_info();
     } else if (equal(line, "halt")) {
         console_write("Halted. Cold power-cycle to restart.\r\n");
         runtime_halt();

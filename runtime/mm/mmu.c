@@ -67,10 +67,14 @@ int mmu_enable(void)
     /* Strongly ordered, XN, privileged-only MMIO. Everything else faults. */
     map_section(0xe0100000u, SEC_XN);
     map_section(0xe0200000u, SEC_XN);
+    map_section(0xe2500000u, SEC_XN); /* PWM timer */
     map_section(0xe2700000u, SEC_XN);
     map_section(0xe2900000u, SEC_XN);
     map_section(0xf0000000u, SEC_XN);
     map_section(0xf1400000u, SEC_XN);
+    for (uint32_t a = 0xf2000000u; a <= 0xf2300000u; a += SECTION_SIZE) {
+        map_section(a, SEC_XN); /* VIC0..3 */
+    }
 
     invalidate_data_caches(); /* only while D-cache is disabled */
     dsb();
