@@ -115,7 +115,124 @@ static void handoff_notice(const char *message){
     HW(H_DIEPINT1,H_XFRC);
     out("HANDOFF EP1 NOTICE SENT\r\n");
 }
+#ifdef USB_HANDOFF_BOOT
+#define H_IMAGE_BASE 0x24000000u
+#define H_IMAGE_LIMIT 0x01000000u
+#define H_CHUNK 65536u
+#define H_MAGIC 0x324c424fu /* OBL2 */
+static uint32_t handoff_le32(const volatile uint8_t *p){
+    return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
+}
+static void handoff_arm_dma(uint32_t address,unsigned bytes){
+    handoff_check();
+    if(HR(H_DOEPCTL2)&H_EPENA)handoff_abort("EP2 still enabled");
+    if(!bytes||bytes>H_CHUNK||(bytes&511u)||(address&3u))
+        handoff_abort("invalid DMA window");
+    HW(H_DOEPINT2,0xffffffffu);
+    HW(H_DOEPDMA2,address);
+    HW(H_DOEPTSIZ2,((bytes>>9)<<19)|bytes);
+    HW(H_DOEPCTL2,HB(15)|(2u<<18)|512u|H_CNAK|H_EPENA);
+}
+static void handoff_wait_dma(unsigned capacity,unsigned expected){
+    while(!(HR(H_DOEPINT2)&H_XFRC))handoff_check();
+    handoff_check();
+    if(!wait_mask(0xec000000u+H_GRSTCTL,HB(31),HB(31)))
+        handoff_abort("DMA completion AHB timeout");
+    unsigned residual=HR(H_DOEPTSIZ2)&0x7ffffu;
+    if(residual>capacity||capacity-residual!=expected)
+        handoff_abort("DMA receive length mismatch");
+    __asm__ volatile("dsb sy":::"memory");
+    HW(H_DOEPINT2,H_XFRC);
+}
+static uint32_t handoff_crc(uint32_t length){
+    /* Reflected CRC-32/ISO-HDLC, 4 bits per lookup. */
+    static const uint32_t table[16]={
+        0x00000000u,0x1db71064u,0x3b6e20c8u,0x26d930acu,
+        0x76dc4190u,0x6b6b51f4u,0x4db26158u,0x5005713cu,
+        0xedb88320u,0xf00f9344u,0xd6d6a3e8u,0xcb61b38cu,
+        0x9b64c2b0u,0x86d3d2d4u,0xa00ae278u,0xbdbdf21cu
+    };
+    uint32_t crc=0xffffffffu;
+    for(uint32_t i=0;i<length;i++){
+        crc^=B(H_IMAGE_BASE+i);
+        crc=(crc>>4)^table[crc&15u];
+        crc=(crc>>4)^table[crc&15u];
+        if((i&0xfffu)==0)handoff_check();
+    }
+    return ~crc;
+}
+static void handoff_run(void){
+    uint32_t ctl,zero=0;
+    __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(ctl));
+    if(ctl&5u)handoff_abort("MMU / data cache enabled");
+    handoff_check();
+    if((HR(H_DOEPCTL2)|HR(H_DIEPCTL1))&H_EPENA)
+        handoff_abort("endpoint still active at GO");
+    HW(H_DCTL,HR(H_DCTL)|HB(1)|HB(9));
+    if(!wait_mask(0xec000000u+H_GRSTCTL,HB(31),HB(31)))
+        handoff_abort("AHB busy at GO");
+    HW(0x008,HR(0x008)&~(HB(5)|HB(0)));
+    if(HR(0x008)&HB(5))handoff_abort("DMA disable failed");
+    out("HANDOFF DDR EXEC ENTRY=0x24000000\r\n");
+    (void)wait_mask(UART+0x10,4,4);
+    __asm__ volatile("cpsid if; dsb sy; mcr p15,0,%0,c7,c5,0; mcr p15,0,%0,c7,c5,6; dsb sy; isb"::"r"(zero):"memory");
+    void (*entry)(void)=(void (*)(void))(uintptr_t)H_IMAGE_BASE;
+    entry();
+    out("DDR APP RETURNED; stopping\r\n");stop();
+}
+#endif
 static void handoff_test(void){
+#ifdef USB_HANDOFF_BOOT
+    uint32_t ctl;
+    __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(ctl));
+    if(ctl&5u)handoff_abort("MMU / data cache enabled");
+    handoff_arm();
+    HW(H_DCTL,HR(H_DCTL)|HB(10));
+    handoff_notice("OB-DMA-BOOT-RDY!");
+    handoff_wait_dma(512u,16u);
+    volatile uint8_t *header=(volatile uint8_t *)(uintptr_t)handoff_packet;
+    uint32_t magic=handoff_le32(header),len=handoff_le32(header+4);
+    uint32_t expected_crc=handoff_le32(header+8),flags=handoff_le32(header+12);
+    if(magic!=H_MAGIC||!len||len>H_IMAGE_LIMIT||flags>1u||
+       (flags&&(len<4u||(len&3u))))
+        handoff_abort("invalid image header");
+    reg("DMA IMAGE BYTES=",len);
+    reg("DMA EXPECTED CRC32=",expected_crc);
+    /* One USB host transfer per DMA window. Round the final hardware
+       window to 512 bytes, never beyond the reserved DDR region. */
+    uint32_t offset=0;
+    while(offset<len){
+        unsigned n=len-offset;
+        if(n>H_CHUNK)n=H_CHUNK;
+        unsigned capacity=(n+511u)&~511u;
+        handoff_arm_dma(H_IMAGE_BASE+offset,capacity);
+        if(!offset)handoff_notice("OB-DMA-HEADEROK!");
+        handoff_wait_dma(capacity,n);
+        offset+=n;
+    }
+    reg("DMA RECEIVED=",offset);
+    uint32_t crc=handoff_crc(len);
+    reg("DMA DDR CRC32=",crc);
+    if(crc!=expected_crc)handoff_abort("DDR CRC32 mismatch");
+    out("HANDOFF DMA DDR VERIFY PASS\r\n");
+    if(!flags){
+        handoff_notice("OB-DMA-VERIFYOK!");
+        out("Data only; cold power-cycle before next download\r\n");
+        for(;;)handoff_check();
+    }
+    handoff_arm();
+    handoff_notice("OB-DMA-VERIFYOK!");
+    handoff_wait_dma(512u,16u);
+    static const char go[]="OB-DMA-EXEC-GO1!";
+    for(unsigned i=0;i<16u;i++)if(header[i]!=(uint8_t)go[i])
+        handoff_abort("invalid GO marker");
+    if(handoff_crc(len)!=expected_crc)handoff_abort("pre-execution CRC32 mismatch");
+    handoff_notice("OB-DMA-GO-ACK01!");
+    /* Short grace interval for host USB completion before disconnect. */
+    uint32_t n=4000000u;
+    __asm__ volatile("1: subs %0,%0,#1\n bne 1b":"+r"(n)::"cc","memory");
+    handoff_run();
+#else
     handoff_check();
     handoff_arm();
     HW(H_DCTL,HR(H_DCTL)|HB(10));
@@ -149,4 +266,5 @@ static void handoff_test(void){
     handoff_notice("OB-HANDOFF-OK01!");
     out("No execution; cold power-cycle before next download\r\n");
     for(;;)handoff_check();
+#endif
 }

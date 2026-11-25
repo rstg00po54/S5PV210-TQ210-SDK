@@ -141,3 +141,19 @@ Wait for exact HANDOFF EP2 READY on UART, then type READY in host terminal. If n
 
 ## Automatic same-handle readiness experiment
 User saw HANDOFF EP2 READY on UART with the initial manual variant; no confirmed packets yet. Replace manual stdin READY with a read-only Bulk IN 0x81 readiness message on the existing USB handle. Before sending stage1, host checks active ROM configuration advertises HS Bulk IN 0x81 and OUT 0x02 on the same interface. Device additionally checks inherited EP1 active bulk configuration, idle and MPS=512, preserves TX FIFO selection and data PID, supplies aligned owned SRAM DMA buffer and one 16-byte IN transfer. After EP2 is armed, send OB-HANDOFF-RDY1!; only exact received marker permits host to send 512 and 37-byte test packets. After DDR content verification device returns OB-HANDOFF-OK01!; host prints HANDOFF DDR VERIFY PASS only if exact marker received. Host IN requests have 5-second timeout; no automatic retry, no EP0 requests after stage1, no re-enumeration, no execution. Earlier EP0 DMA guard caveats still apply; IN hardware behavior has not been tested. UART remains diagnostic only. Rebuild host and firmware together; same command --handoff-test out/rom_usb_handoff.bin, no input required. If error occurs, capture host and UART logs and cold power cycle. Source not cross-compiled or hardware-tested in this revision.
+
+
+## Same-handle bidirectional DMA validated
+The 0ada083 firmware printed EP1 readiness/verification notice completion, EP2 packet lengths 512 and 37, EP2 control alternating 0x000A8200 and 0x000B8200, and HANDOFF SAME CONNECTION PASS: 549 bytes, DMA + DDR readback. This establishes a working controlled same-connection transfer in both directions, without a USB reset/re-enumeration. No total timing reported for this run.
+
+## Experimental continuous direct-to-DDR DMA boot
+New rom_usb_dma_boot.bin retains the verified handoff guard and EP1 notification path. Protocol OBL2: 16-byte header (magic 0x324c424f, length, CRC32, executable flag), fixed DDR base 0x24000000, maximum 16 MiB. Header is a separate short OUT transfer, then EP2 receives directly into DDR in windows up to 65536 bytes / 128 packets. Final DMA capacity is rounded to 512 bytes within the reserved region, and actual length is checked against residual. Each transfer is armed only after the preceding DMA finishes. Readback CRC32 uses a 16-entry nibble table. EP1 sends exact readiness, header acceptance, verify and GO acknowledgment tokens. Executable images require a separate exact GO packet and a second CRC before GO ACK. Disconnect, disable DMA after AHB idle, invalidate I-cache/branch predictor, enter ARM image at 0x24000000. Same inherited SVC stack/VBAR ABI as earlier, no Linux boot ABI. No NAND/SD writes. Data-only test does not execute. Both host and firmware must be updated; original rom_usb_handoff.bin and rom_usb_fast.bin retained. Inherited EP0 guard limitations remain; controlled host only, no other USB queries.
+
+    git pull
+    sh boot/build.sh
+    cmake --build build-host
+    # separate cold boots for each command
+    sudo ./build-host/tq210-dnw --dma-boot out/rom_usb_dma_boot.bin out/ddr_app.bin
+    sudo ./build-host/tq210-dnw --dma-test out/rom_usb_dma_boot.bin
+
+Expected boot UART DDR APP EXEC PASS; data-only test 1048589 bytes CRC32 0x6eefefc7, no execution. Host timing ends at GO ACK, not actual application execution. No measured direct-DDR throughput yet; new multi-packet DMA mode, CRC and launch path are uncompiled and untested in this revision. Fail closed on unexpected state; cold reboot before retry.
