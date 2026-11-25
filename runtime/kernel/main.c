@@ -38,7 +38,7 @@ void runtime_main(void)
     }
     console_write("[5] Cached memory test PASS\r\n");
 #else
-    console_write("SAFE MODE: MMU/D-Cache remain OFF; use mmu on then cache on.\r\n");
+    console_write("SAFE MODE: MMU/D-Cache remain OFF; run autotest for staged validation.\r\n");
 #endif
     mmu_info();
     shell_run();

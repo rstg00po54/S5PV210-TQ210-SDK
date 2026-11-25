@@ -12,6 +12,5 @@ int page_free(uintptr_t addr, unsigned count);
 unsigned page_free_count(void);
 int memory_selftest(void);
 void memory_info(void);
-void runtime_autotest(void);
 void shell_run(void) __attribute__((noreturn));
 #endif
