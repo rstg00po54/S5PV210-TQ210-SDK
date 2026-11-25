@@ -265,6 +265,52 @@ static void full_ddr_test(void) {
 }
 #endif
 
+
+#ifdef USB_STATE_PROBE
+/* Read-only register survey: do not pop GRXSTSP or read FIFO windows.
+ * No core reset, PHY power changes, interrupt ACK, DMA, or USB packets. */
+struct usb_reg { const char *name; uint32_t offset; };
+static uint32_t usb_report(const char *name,uint32_t a) {
+    out(name); out("="); uint32_t v=R(a); hex(v); out("\r\n"); return v;
+}
+static void usb_state(void) {
+    static const struct usb_reg common[]={
+        {"GOTGCTL",0x000},{"GOTGINT",0x004},{"GAHBCFG",0x008},
+        {"GUSBCFG",0x00c},{"GRSTCTL",0x010},{"GINTMSK",0x018},
+        {"GRXFSIZ",0x024},{"GNPTXFSIZ",0x028},
+        {"GHWCFG1",0x044},{"GHWCFG2",0x048},{"GHWCFG3",0x04c},
+        {"GHWCFG4",0x050}
+    };
+    static const struct usb_reg device[]={
+        {"DCFG",0x800},{"DCTL",0x804},{"DSTS",0x808},
+        {"DIEPMSK",0x810},{"DOEPMSK",0x814},{"DAINT",0x818},
+        {"DAINTMSK",0x81c},{"DIEPCTL0",0x900},{"DIEPINT0",0x908},
+        {"DIEPTSIZ0",0x910},{"DIEPDMA0",0x914},
+        {"DOEPCTL0",0xb00},{"DOEPINT0",0xb08},
+        {"DOEPTSIZ0",0xb10},{"DOEPDMA0",0xb14},
+        {"DOEPCTL2",0xb40},{"DOEPINT2",0xb48},
+        {"DOEPTSIZ2",0xb50},{"DOEPDMA2",0xb54}
+    };
+    out("\r\nUSB OTG STATE v0.1 (read only)\r\n");
+    uint32_t gate=usb_report("CLK_GATE_IP1",0xe0100464u);
+    uint32_t iso=usb_report("USB_PHY_CONTROL",0xe010e80cu);
+    if(!(gate&(1u<<16))) {out("OTG CLOCK GATED; no controller access\r\n");return;}
+    if(!(iso&1u)) {out("DEVICE PHY ISOLATED; no controller access\r\n");return;}
+    usb_report("PHY_PWR",0xec100000u);
+    usb_report("PHY_CLK",0xec100004u);
+    usb_report("PHY_RST",0xec100008u);
+    uint32_t id=usb_report("GSNPSID",0xec000040u);
+    if((id&0xffff0000u)!=0x4f540000u) {out("Unrecognized core ID; stop register survey\r\n");return;}
+    for(unsigned i=0;i<sizeof(common)/sizeof(common[0]);i++)
+        usb_report(common[i].name,0xec000000u+common[i].offset);
+    uint32_t status=usb_report("GINTSTS",0xec000014u);
+    if(status&1u) {out("HOST MODE; device registers skipped\r\n");return;}
+    for(unsigned i=0;i<sizeof(device)/sizeof(device[0]);i++)
+        usb_report(device[i].name,0xec000000u+device[i].offset);
+    out("USB STATE DONE\r\n");
+}
+#endif
+
 #endif
 void boot_main(void) {
     wr(0xe2700000,0);
@@ -282,6 +328,10 @@ void boot_main(void) {
 #ifdef DMC0_ROW14
     out("OpenBoot v0.4 A/B: DMC0 geometry 0x1323\r\n");
 #endif
+#ifdef USB_STATE_PROBE
+    /* Snapshot inherited USB hardware before DDR initialization. */
+    usb_state();
+#endif
     drive_strength();
     if(!dmc_init(0xf0000000,0)) {out("DMC0 FAIL\r\n");stop();}
     if(!dmc_init(0xf1400000,1)) {out("DMC1 FAIL\r\n");stop();}
@@ -289,6 +339,9 @@ void boot_main(void) {
     if(!ddr_exec()) {out("DDR EXEC FAIL\r\n");stop();}
     out("[5] DDR EXEC PASS; back in SRAM\r\n");
     out("OpenBoot diagnostic complete. a=optional DMC0 alias probe, b=DMC1, m=dual-window map test.\r\n");
+#ifdef USB_STATE_PROBE
+    out("USB state probe available: lowercase u repeats snapshot.\r\n");
+#endif
 #ifdef DDR_FULL_TEST
     out("Full memory test available: uppercase T destroys all DDR contents.\r\n");
 #endif
@@ -297,6 +350,9 @@ void boot_main(void) {
         if(c=='a')alias_probe(RAM0);
         if(c=='b')alias_probe(RAM1);
         if(c=='m')map_probe();
+#ifdef USB_STATE_PROBE
+        if(c=='u')usb_state();
+#endif
 #ifdef DDR_FULL_TEST
         if(c=='T')full_ddr_test();
 #endif

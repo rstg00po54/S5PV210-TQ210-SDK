@@ -34,3 +34,14 @@ Cold power-cycle, enter iROM USB mode, open UART0, then:
     sudo ./build-host/tq210-dnw out/rom_ddr_full.bin --pad-vendor-size
 
 After scratch and execution PASS, optionally run m again, then send uppercase T once. All DDR contents will be overwritten, including the old test stub. The iRAM code and stack remain intact. The test requires MMU and D-cache off, and both corrected MEMCONFIG0 values. It writes every aligned 32-bit word across both banks before verifying either bank, then repeats with the complementary address-dependent pattern. 32 MiB progress markers identify the current region. A complete successful run checks 268435456 words per pass, two passes, 4 GiB total read/write traffic. Counts are cumulative per bank. Do not use with live DDR data or an OS. No NAND/SD access; reset on hangs. The new command is source-reviewed, not yet cross-compiled or tested on hardware. This is an exhaustive address/pattern test, not a proof of long-term retention, all data patterns, or operation at other clocks.
+
+## Full 1 GiB test — PASS (2026-11-25)
+
+User ran rom_ddr_full.bin and uppercase T following a standalone boot. Both complete passes wrote every aligned 32-bit word in [0x20000000,0x60000000) and then read both banks. Each pass reported DMC0 and DMC1 cumulative errors 0. Final output:
+
+    DMC0 CUMULATIVE ERRORS=0x00000000
+    DMC1 CUMULATIVE ERRORS=0x00000000
+    FULL DDR TEST PASS: 1024 MiB, two patterns, every 32-bit word
+    DDR contents overwritten; iRAM console still running
+
+32 write and 32 verify blocks per pass, two passes, 4 GiB total memory traffic. Corrected geometry confirmed at the inherited ROM clock state, without vendor BL2. Not a long-term retention, temperature, all-pattern, or higher-frequency qualification. Preserve this firmware as a baseline.
