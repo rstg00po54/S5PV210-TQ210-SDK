@@ -1,0 +1,2 @@
+factory-images/linux/Linux文件系统镜像/rootfs_linux_v1.4_CoreB.bin filter=lfs diff=lfs merge=lfs -text
+linux-resources/qt-sources/qt-4.5_for_TQ210_V1.1.tar.bz2 filter=lfs diff=lfs merge=lfs -text
