@@ -132,3 +132,19 @@ Manual opt-in only; no NAND commands run at boot or during the existing runtime 
 The driver only issues RESET, READ ID, STATUS, and READ PAGE. It enables NFCON clock, selects CE0, sets conservative timings, and maps 0xb0e00000 strongly ordered/XN. No program/erase operations, no ECC, no partition assumptions. Unknown IDs/geometries are blocked from page reads. Diagnostic range is limited to the first 512 MiB on CE0, not an assertion of actual total capacity. Scan reports candidate OOB markers only; cannot establish factory bad blocks until exact chip and OOB layout are confirmed. Repeated raw page reads do not prove content integrity. No benchmark yet. Physical pinmux, timing, ID, and all NAND functions require hardware validation. If a timeout or fault occurs, capture UART and cold restart. Original runtime autotest remains independent. No changes to OpenBoot.
 
 References: https://www.eepw.com.cn/article/201611/322805.htm ; Linux drivers/clk/samsung/clk-s5pv210.c (NFCON clock gate).
+
+## NAND phase 2 (experimental, read-only)
+Phase 1 hardware log: ID 01 D3 D1 95 58; repeated page 0..3 reads PASS; status E0; page 0 OOB offsets 0..11 FF, 12..63 contain data; first 64 blocks showed no non-FF first OOB markers. No ECC validation in phase 1.
+
+    nand autotest
+    nand onfi
+    nand info
+    nand boundary
+    nand bench
+    nand scan all
+    nand ecc 0
+    nand ecc 1
+
+ONFI reads three 256-byte parameter copies, checks CRC16 (seed 4F4E, poly 8005), requires exact Spansion ID and 2 LUN x 4096 blocks x 64 pages with 2048+64 byte pages before opening 524288 pages. Boundary samples repeated raw reads, reports different low/high data pairs; identical samples are inconclusive. Scan samples first OOB marker of first two pages in each enabled block; candidate markers only, not definitive bad blocks. Bench reads 512 pages with OOB and hash, reports PMU cycles; no timing change. ECC probe uses candidate OOB offset 12, 13 bytes per sector, reads 512 bytes and stored parity via random output; reports hardware status, error locations and patterns without applying corrections. The ECC sequence is experimental and may time out; it is not an integrity guarantee. No program/erase commands or changes to OpenBoot. Stop timer/background tasks before testing. Cold reset if fault. Run ECC last.
+
+References: Spansion S34ML08G1_07 parameter page table 7.3; S5PC110 UM section 4.5.3 (related controller); https://www.cnblogs.com/zsychanpin/p/7039337.html (8-bit ECC OOB layout). Hardware and cross-build validation pending.
