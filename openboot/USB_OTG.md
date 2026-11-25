@@ -90,3 +90,18 @@ Send e in UART, attach new device to Ubuntu, wait for EP2 ready and OPENBOOT USB
     sudo ./build-host/tq210-dnw --load out/ddr_app.bin
 
 After host BULK DDR VERIFY PASS, send lowercase x on UART. The independently linked stackless ARM test payload checks its entry address and prints "DDR APP EXEC PASS: independent ARM image at 0x24000000", then loops. Recover by cold power-cycle. Do not run --bulk-test before --load on the same receiver without reboot. Newly written source not cross-compiled or tested on target; original rom_usb_bulk.bin retained.
+
+
+## Independent DDR execution validated
+User ran rom_usb_exec.bin and --load out/ddr_app.bin, then UART x. 188 bytes (0xbc) received at 0x24000000, CRC32 0x9bb258bc matched on initial readback and second verification, USB disconnected, independent DDR APP EXEC PASS printed. This validates the manual two-stage boot chain at ROM clocks.
+
+## Experimental automatic two-stage boot
+rom_usb_auto.bin adds auto takeover after DDR checks, revision 4 / TQ210 Auto Boot, and explicit vendor control GO (40/5b, value 4f42, index 4c31, no data). Requires verified flag-1 image and completed EP0 IN status before launch, then waits briefly before disconnect and repeats DDR CRC. Existing UART x fallback retained. --boot verifies cold ROM product string, pads SRAM image to 11168 bytes, uses known ROM framing, waits up to 60 seconds for new product/revision and ready protocol status, sends DDR image and checks CRC, then issues GO. It does not resend stage1 automatically. Cold boot with only one matching board connected. Exact ROM product string check is conservative and may need adjustment for a differing ROM descriptor. VMware may require manual reattachment; do not send e/x unless diagnosing manually. Host GO ACK does not prove CPU execution; UART is the proof. No NAND/SD writes, Linux ABI, cryptographic authentication, or arbitrary addresses. New source not compiled or target-tested in this revision; known manual firmware remains available.
+
+    git pull
+    sh boot/build.sh
+    cmake --build build-host
+    # cold reboot to iROM USB mode, keep UART monitor open
+    sudo ./build-host/tq210-dnw --boot out/rom_usb_auto.bin out/ddr_app.bin
+
+Expected final UART: DDR APP EXEC PASS: independent ARM image at 0x24000000. If auto firmware exceeds 11168 bytes, host refuses rather than sending an unverified ROM frame. If timeout/error occurs capture host and UART logs; cold reset before retry.

@@ -48,8 +48,21 @@ static Packets packets(const Bytes& image,uint32_t addr,bool full,bool join){
 }
 static void check(int rc,const char* label){if(rc<0)throw std::runtime_error(std::string(label)+": "+libusb_error_name(rc));}
 struct Usb {libusb_context* c=nullptr;libusb_device_handle* h=nullptr;int iface=-1;~Usb(){if(h){if(iface>=0)libusb_release_interface(h,iface);libusb_close(h);}if(c)libusb_exit(c);}};
-static void send(Packets& p,bool reconfig){
+static std::string product_name(libusb_device_handle* h,libusb_device_descriptor& dd){
+    check(libusb_get_device_descriptor(libusb_get_device(h),&dd),"device descriptor");
+    if(!dd.iProduct)throw std::runtime_error("no USB product string");
+    unsigned char name[128]{};
+    int n=libusb_get_string_descriptor_ascii(h,dd.iProduct,name,sizeof(name));
+    check(n,"product string");
+    return std::string(reinterpret_cast<char*>(name),size_t(n));
+}
+static void send(Packets& p,bool reconfig,bool strict_rom=false){
     Usb u;check(libusb_init(&u.c),"libusb_init");u.h=libusb_open_device_with_vid_pid(u.c,0x04e8,0x1234);if(!u.h)throw std::runtime_error("04e8:1234 not accessible; check USB boot/VM attachment/permissions");
+    if(strict_rom){
+        libusb_device_descriptor dd{};
+        const auto name=product_name(u.h,dd);
+        if(name!="SEC S5PC110 Test B/D")throw std::runtime_error("expected cold Samsung ROM device, got "+name+"; nothing sent");
+    }
     if(reconfig)check(libusb_set_configuration(u.h,1),"SET_CONFIGURATION(1)");
     libusb_config_descriptor* cfg=nullptr;check(libusb_get_active_config_descriptor(libusb_get_device(u.h),&cfg),"get active config");
     int iface=-1,ep=-1,count=0;for(int i=0;i<cfg->bNumInterfaces;i++)for(int j=0;j<cfg->interface[i].num_altsetting;j++){
@@ -81,23 +94,39 @@ static Bytes bulk_status(libusb_device_handle* h){
     check(n,"OpenBoot protocol status");if(n!=20||get32(status.data())!=0x314c424fu)throw std::runtime_error("not OpenBoot bulk protocol; nothing sent");
     return status;
 }
-static void bulk_send(const Bytes& payload,bool executable){
+static void bulk_send(const Bytes& payload,bool executable,bool automatic=false){
     if(payload.empty()||payload.size()>0x01000000u||(executable&&(payload.size()<4u||(payload.size()&3u))))throw std::runtime_error("invalid DDR image length (ARM image must be 4-byte aligned; max 16 MiB)");
     const Bytes check_vector{'1','2','3','4','5','6','7','8','9'};
     if(crc32(check_vector)!=0xcbf43926u)throw std::runtime_error("CRC32 selftest");
     Usb u;check(libusb_init(&u.c),"libusb_init");
-    u.h=libusb_open_device_with_vid_pid(u.c,0x04e8,0x1234);
-    if(!u.h)throw std::runtime_error("attach OpenBoot Bulk Test to Ubuntu");
-    libusb_device_descriptor dd{};
-    check(libusb_get_device_descriptor(libusb_get_device(u.h),&dd),"device descriptor");
-    if((dd.bcdDevice!=2&&dd.bcdDevice!=3)||!dd.iProduct||(executable&&dd.bcdDevice!=3))throw std::runtime_error("wrong device revision; do not send to iROM or non-executable receiver");
-    unsigned char name[128]{};
-    int n=libusb_get_string_descriptor_ascii(u.h,dd.iProduct,name,sizeof(name));
-    check(n,"product string");const std::string expected=dd.bcdDevice==3?"TQ210 Exec Test":"TQ210 Bulk Test";if(std::string(reinterpret_cast<char*>(name),size_t(n))!=expected)throw std::runtime_error("wrong product; nothing sent");
-    int cfg=0;check(libusb_get_configuration(u.h,&cfg),"get configuration");
-    if(cfg!=1)throw std::runtime_error("configuration 1 not active; attach device again");
-    auto status=bulk_status(u.h);
-    if(get32(status.data()+4)!=0||get32(status.data()+8)!=0)throw std::runtime_error("receiver not fresh; cold reboot before retry");
+    if(automatic)std::cout<<"Waiting for TQ210 Auto Boot re-enumeration (reattach in VMware if necessary)...\n"<<std::flush;
+    Bytes status;
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);
+    for(;;){
+        u.h=libusb_open_device_with_vid_pid(u.c,0x04e8,0x1234);
+        try{
+            if(!u.h)throw std::runtime_error("OpenBoot not accessible");
+            libusb_device_descriptor dd{};
+            const auto name=product_name(u.h,dd);
+            const bool valid=(dd.bcdDevice==2&&name=="TQ210 Bulk Test"&&!executable)||
+                (dd.bcdDevice==3&&name=="TQ210 Exec Test"&&!automatic)||
+                (dd.bcdDevice==4&&name=="TQ210 Auto Boot");
+            if(!valid||(automatic&&dd.bcdDevice!=4))
+                throw std::runtime_error("wrong device identity; no bulk data sent");
+            int cfg=0;check(libusb_get_configuration(u.h,&cfg),"get configuration");
+            if(cfg!=1)throw std::runtime_error("configuration 1 not active");
+            status=bulk_status(u.h);
+            if(get32(status.data()+4)!=0||get32(status.data()+8)!=0)
+                throw std::runtime_error("receiver not fresh");
+            break;
+        }catch(const std::exception&){
+            if(!automatic)throw;
+            if(u.h){libusb_close(u.h);u.h=nullptr;}
+            if(std::chrono::steady_clock::now()>=deadline)
+                throw std::runtime_error("Auto Boot not ready within 60s; check UART/VMware; cold reboot before retry");
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    }
     check(libusb_claim_interface(u.h,0),"claim interface");u.iface=0;
     uint32_t crc=crc32(payload);
     Bytes wire;append32(wire,0x314c424fu);append32(wire,uint32_t(payload.size()));append32(wire,crc);append32(wire,executable?1u:0u);
@@ -116,6 +145,13 @@ static void bulk_send(const Bytes& payload,bool executable){
         if(state==2){
             if(got!=payload.size()||len!=payload.size()||actual!=crc)throw std::runtime_error("verification result mismatch");
             std::printf("BULK DDR VERIFY PASS: %u bytes CRC32=%08x\n",unsigned(got),unsigned(actual));
+            if(automatic){
+                int rc=libusb_control_transfer(u.h,0x40,0x5b,0x4f42,0x4c31,nullptr,0,5000);
+                check(rc,"USB GO (if disconnected, check UART before retrying)");
+                if(rc!=0)throw std::runtime_error("unexpected USB GO response");
+                std::cout<<"USB GO acknowledged; CPU execution must be confirmed on UART.\n";
+                return;
+            }
             if(executable)std::cout<<"DDR image at 0x24000000; send lowercase x on UART to execute (not executed yet).\n";
             return;
         }
@@ -130,7 +166,7 @@ static void bulk_test(){
     for(auto& x:payload){seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;x=uint8_t(seed);}
     bulk_send(payload,false);
 }
-static void bulk_load(const char* path){
+static Bytes read_image(const char* path){
     std::ifstream f(path,std::ios::binary|std::ios::ate);
     if(!f)throw std::runtime_error("cannot open DDR image");
     const auto size=f.tellg();
@@ -138,14 +174,29 @@ static void bulk_load(const char* path){
     Bytes payload(static_cast<size_t>(size));
     f.seekg(0);
     if(!f.read(reinterpret_cast<char*>(payload.data()),static_cast<std::streamsize>(size)))throw std::runtime_error("cannot read DDR image");
-    bulk_send(payload,true);
+    if(payload.size()&3u)throw std::runtime_error("ARM image length must be 4-byte aligned");
+    return payload;
+}
+static void bulk_load(const char* path){bulk_send(read_image(path),true);}
+static void auto_boot(const char* loader,const char* app){
+    Bytes payload=read_image(app);
+    std::ifstream f(loader,std::ios::binary);
+    if(!f)throw std::runtime_error("cannot open SRAM loader");
+    Bytes first((std::istreambuf_iterator<char>(f)),{});
+    if(first.empty()||first.size()>11168)throw std::runtime_error("SRAM loader must fit vendor-size 11168-byte frame");
+    first.resize(11168,0);
+    auto p=packets(first,0xd0020010,false,false);
+    std::cout<<"Stage 1: sending SRAM loader to cold ROM\n"<<std::flush;
+    send(p,true,true);
+    bulk_send(payload,true,true);
 }
 int main(int argc,char** argv){try{
+    if(argc==4&&std::string(argv[1])=="--boot"){auto_boot(argv[2],argv[3]);return 0;}
     if(argc==3&&std::string(argv[1])=="--load"){bulk_load(argv[2]);return 0;}
     if(argc==2&&std::string(argv[1])=="--bulk-test"){bulk_test();return 0;}
     bool dry=false,full=false,join=false,pad=false,reconfig=true;std::string path;
     for(int i=1;i<argc;i++){std::string a=argv[i];if(a=="--selftest"){selftest();return 0;}else if(a=="--dry-run")dry=true;else if(a=="--full-checksum")full=true;else if(a=="--join-tail")join=true;else if(a=="--pad-vendor-size")pad=true;else if(a=="--no-reconfigure")reconfig=false;else if(!a.empty()&&a[0]!='-'&&path.empty())path=a;else throw std::runtime_error("unknown argument: "+a);}
-    if(path.empty()){std::cout<<"Usage: tq210-dnw IMAGE [--dry-run] [--full-checksum] [--join-tail] [--pad-vendor-size] [--no-reconfigure]\n       tq210-dnw --selftest\n       tq210-dnw --bulk-test\n       tq210-dnw --load DDR_IMAGE\n";return 1;}
+    if(path.empty()){std::cout<<"Usage: tq210-dnw IMAGE [--dry-run] [--full-checksum] [--join-tail] [--pad-vendor-size] [--no-reconfigure]\n       tq210-dnw --selftest\n       tq210-dnw --bulk-test\n       tq210-dnw --load DDR_IMAGE\n       tq210-dnw --boot SRAM_LOADER DDR_IMAGE\n";return 1;}
     std::ifstream f(path,std::ios::binary);if(!f)throw std::runtime_error("cannot open image");Bytes b((std::istreambuf_iterator<char>(f)),{});if(b.empty()||b.size()>16368)throw std::runtime_error("invalid image length");
     if(pad){if(b.size()>11168)throw std::runtime_error("cannot pad to vendor size");b.resize(11168,0);}
     auto p=packets(b,0xd0020010,full,join);auto& t=p.back();unsigned sum=unsigned(t[t.size()-2])|(unsigned(t.back())<<8);

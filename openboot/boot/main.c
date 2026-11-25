@@ -345,6 +345,11 @@ void boot_main(void) {
 #ifdef USB_STATE_PROBE
     out("USB state probe available: lowercase u repeats snapshot.\r\n");
 #endif
+#ifdef USB_AUTO_BOOT
+    out("OpenBoot Auto Boot: starting USB takeover automatically.\r\n");
+    usb_settle();
+    usb_enum_test();
+#endif
 #ifdef USB_ENUM_TEST
     out("USB enumeration experiment: lowercase e takes ownership; q disconnects.\r\n");
 #endif

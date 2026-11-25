@@ -46,7 +46,9 @@ static unsigned usb_setup_valid,usb_config,usb_phase;
 enum { USB_IDLE,USB_IN_DATA,USB_OUT_STATUS,USB_IN_STATUS };
 /* No endpoint other than EP0 advertised at this milestone. */
 static const uint8_t usb_device_desc[]={
-#ifdef USB_EXEC_TEST
+#ifdef USB_AUTO_BOOT
+    18,1,0,2,0,0,0,64,0xe8,0x04,0x34,0x12,0x04,0x00,1,2,0,1
+#elif defined(USB_EXEC_TEST)
     18,1,0,2,0,0,0,64,0xe8,0x04,0x34,0x12,0x03,0x00,1,2,0,1
 #elif defined(USB_BULK_TEST)
     18,1,0,2,0,0,0,64,0xe8,0x04,0x34,0x12,0x02,0x00,1,2,0,1
@@ -69,7 +71,10 @@ static const uint8_t usb_other_desc[]={9,7,18,0,1,1,0,0x80,50,9,4,0,0,0,0xff,0,0
 static const uint8_t usb_qualifier[]={10,6,0,2,0,0,0,64,1,0};
 static const uint8_t usb_lang[]={4,3,9,4};
 static const uint8_t usb_manufacturer[]={18,3,'O',0,'p',0,'e',0,'n',0,'B',0,'o',0,'o',0,'t',0};
-#ifdef USB_EXEC_TEST
+#ifdef USB_AUTO_BOOT
+static const uint8_t usb_product[]={32,3,'T',0,'Q',0,'2',0,'1',0,'0',0,' ',0,'A',0,'u',0,'t',0,'o',0,' ',0,'B',0,'o',0,'o',0,'t',0};
+static unsigned usb_exec_pending;
+#elif defined(USB_EXEC_TEST)
 static const uint8_t usb_product[]={32,3,'T',0,'Q',0,'2',0,'1',0,'0',0,' ',0,'E',0,'x',0,'e',0,'c',0,' ',0,'T',0,'e',0,'s',0,'t',0};
 #elif defined(USB_BULK_TEST)
 static const uint8_t usb_product[]={32,3,'T',0,'Q',0,'2',0,'1',0,'0',0,' ',0,'B',0,'u',0,'l',0,'k',0,' ',0,'T',0,'e',0,'s',0,'t',0};
@@ -106,6 +111,9 @@ static void bulk_reset(void){
     bulk_len=0;bulk_count=0;bulk_expected_crc=0;bulk_actual_crc=0;
 #ifdef USB_EXEC_TEST
     bulk_flags=0;
+#endif
+#ifdef USB_AUTO_BOOT
+    usb_exec_pending=0;
 #endif
 }
 static uint32_t bulk_get32(const uint8_t *p){
@@ -273,6 +281,17 @@ static void usb_request(void) {
     reg("SETUP LENGTH=",len);
     const uint8_t *p=0;unsigned n=0;
     uint8_t small[2]={0,0};
+#ifdef USB_AUTO_BOOT
+    usb_exec_pending=0;
+    /* Explicit host GO after verifying status; never execute on receipt alone. */
+    if(type==0x40u&&req==0x5bu&&value==0x4f42u&&index==0x4c31u&&len==0u&&
+       usb_config==1u&&bulk_state==BULK_PASS&&(bulk_flags&1u)&&bulk_count==bulk_len){
+        if(usb_reply(0,0,0,USB_IN_STATUS)){
+            usb_exec_pending=1;
+            out("USB GO accepted; waiting for status completion\r\n");return;
+        }
+    }
+#endif
 #ifdef USB_BULK_TEST
     /* Read-only protocol identification and verification status. */
     if(type==0xc0u&&req==0x5au&&value==0x4f42u&&index==0x4c31u&&len==20u){
@@ -430,7 +449,10 @@ static int usb_start(void) {
     usb_phase=USB_IDLE;usb_config=0;usb_setup_valid=0;
     UW(DIEPCTL0,ACTIVE|SNAK);usb_arm_setup();
     UW(GINTMSK,USB_RESET|USB_ENUM|RX_LEVEL|UBIT(18)|UBIT(19));
-#ifdef USB_EXEC_TEST
+#ifdef USB_AUTO_BOOT
+    bulk_reset();
+    out("USB RECONNECT: 04e8:1234 OpenBoot Auto Boot EP2\r\n");
+#elif defined(USB_EXEC_TEST)
     bulk_reset();
     out("USB RECONNECT: 04e8:1234 OpenBoot Exec Test EP2\r\n");
 #elif defined(USB_BULK_TEST)
@@ -464,6 +486,15 @@ static void usb_enum_test(void) {
                 usb_phase=USB_IDLE;usb_arm_setup();
 #ifdef USB_BULK_TEST
                 if(bulk_pending_config)bulk_configure();
+#endif
+#ifdef USB_AUTO_BOOT
+                if(usb_exec_pending){
+                    usb_exec_pending=0;
+                    /* Status IN completed. Let the host finish the control
+                       transfer before disconnecting. Reset aborts launch. */
+                    usb_settle();
+                    if(!(UREG(GINTSTS)&USB_RESET))bulk_execute();
+                }
 #endif
                 if(usb_config)out("OPENBOOT USB CONFIGURED\r\n");
             }else if(usb_phase==USB_IN_DATA)usb_phase=USB_OUT_STATUS;
