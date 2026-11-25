@@ -311,6 +311,9 @@ static void usb_state(void) {
 }
 #endif
 
+#ifdef USB_ENUM_TEST
+#include "usb_enum.inc"
+#endif
 #endif
 void boot_main(void) {
     wr(0xe2700000,0);
@@ -342,6 +345,9 @@ void boot_main(void) {
 #ifdef USB_STATE_PROBE
     out("USB state probe available: lowercase u repeats snapshot.\r\n");
 #endif
+#ifdef USB_ENUM_TEST
+    out("USB enumeration experiment: lowercase e takes ownership; q disconnects.\r\n");
+#endif
 #ifdef DDR_FULL_TEST
     out("Full memory test available: uppercase T destroys all DDR contents.\r\n");
 #endif
@@ -350,6 +356,9 @@ void boot_main(void) {
         if(c=='a')alias_probe(RAM0);
         if(c=='b')alias_probe(RAM1);
         if(c=='m')map_probe();
+#ifdef USB_ENUM_TEST
+        if(c=='e')usb_enum_test();
+#endif
 #ifdef USB_STATE_PROBE
         if(c=='u')usb_state();
 #endif
