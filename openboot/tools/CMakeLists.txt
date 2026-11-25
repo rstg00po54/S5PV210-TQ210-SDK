@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(tq210_dnw LANGUAGES CXX)
+find_library(LIBUSB NAMES usb-1.0 libusb-1.0.so.0 REQUIRED)
+add_executable(tq210-dnw dnw.cpp)
+target_compile_features(tq210-dnw PRIVATE cxx_std_17)
+target_compile_options(tq210-dnw PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(tq210-dnw PRIVATE ${LIBUSB})
