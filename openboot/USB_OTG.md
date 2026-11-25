@@ -122,3 +122,18 @@ New optional rom_usb_fast.bin keeps both original 40-million-iteration disconnec
     sudo ./build-host/tq210-dnw --boot out/rom_usb_fast.bin out/ddr_app.bin
 
 Record all [TIME] lines and the final UART DDR APP EXEC PASS. Total measures host GO ACK, not final payload execution. If fast mode regresses, use baseline. No target cross-build or hardware validation performed for this commit. Further optimization should follow the measurements; VMware/Windows enumeration latency may dominate.
+
+
+## Fast boot latency measurement
+User measured 19 ms ROM upload, 4925 ms stage2 readiness (includes DDR init and USB re-enumeration), 1 ms DDR upload, 18 ms verification, 0 ms GO ACK, total 4968 ms. This does not separately time device initialization or VMware enumeration; 99.1% is the aggregate readiness interval.
+
+## Experimental no-re-enumeration DMA handoff
+New rom_usb_handoff.bin and --handoff-test intentionally keep the original USB address and host libusb handle, no reset, no SET_CONFIGURATION after stage1, no product or status query after handoff. DWC OTG 2.81a buffer DMA remains enabled; EP2 must already be inactive, active-type bulk/512-byte HS, and not stalled. Assert global OUT NAK and wait for AHB idle; redirect inherited EP0 DMA pointers into owned aligned 512-byte SRAM scratch, verify readback, abort on unexpected setup/reset/DMA error. This is a controlled EP2-only experiment, not a general USB stack: EP0 SETUP may bypass NAK; no other host traffic allowed. Writes to active EP0 DMA registers may be ignored or undefined on this revision; readback is a precaution, not proof of safety. A hardware fault or failure requires cold reset. Original SRAM/DDR checks retained; use two separate fixed DMA packets (512 then 37 bytes) with no DATA0/DATA1 reset command, verify exact length, contents and DDR copy at 0x24000000. No arbitrary code execution or NAND/SD writes. DMA/endpoint register layout reference https://codebrowser.dev/linux/linux/drivers/usb/dwc2/hw.h.html ; global OUT NAK/endpoint disable reference https://cos.googlesource.com/third_party/kernel/+/7666206b23e339344a2974d8af2b7fce882288f5/drivers/usb/dwc2/gadget.c . These sources do not establish that live ROM takeover is supported.
+
+    git pull
+    sh boot/build.sh
+    cmake --build build-host
+    # cold ROM, single board, UART monitor open, no lsusb -v/other USB tools
+    sudo ./build-host/tq210-dnw --handoff-test out/rom_usb_handoff.bin
+
+Wait for exact HANDOFF EP2 READY on UART, then type READY in host terminal. If no READY, type anything else or Ctrl-C and cold reset. Do not send more data. Expected HANDOFF SAME CONNECTION PASS on UART plus two same-handle transfers on host. No automatic fallback or retry. This first experiment intentionally uses a manual readiness gate to prevent sending data to the ROM if takeover failed; it cannot yet measure automatic total boot latency. Keep original rom_usb_fast.bin. Source not cross-compiled/target-tested in this commit.

@@ -61,8 +61,8 @@ static std::string product_name(libusb_device_handle* h,libusb_device_descriptor
     check(n,"product string");
     return std::string(reinterpret_cast<char*>(name),size_t(n));
 }
-static void send(Packets& p,bool reconfig,bool strict_rom=false){
-    Usb u;check(libusb_init(&u.c),"libusb_init");u.h=libusb_open_device_with_vid_pid(u.c,0x04e8,0x1234);if(!u.h)throw std::runtime_error("04e8:1234 not accessible; check USB boot/VM attachment/permissions");
+static void send_on(Usb& u,Packets& p,bool reconfig,bool strict_rom=false){
+    check(libusb_init(&u.c),"libusb_init");u.h=libusb_open_device_with_vid_pid(u.c,0x04e8,0x1234);if(!u.h)throw std::runtime_error("04e8:1234 not accessible; check USB boot/VM attachment/permissions");
     if(strict_rom){
         libusb_device_descriptor dd{};
         const auto name=product_name(u.h,dd);
@@ -78,6 +78,7 @@ static void send(Packets& p,bool reconfig,bool strict_rom=false){
     for(size_t i=0;i<p.size();i++){int sent=0;int rc=libusb_bulk_transfer(u.h,uint8_t(ep),p[i].data(),int(p[i].size()),&sent,10000);std::printf("transfer %zu: %d/%zu %s\n",i,sent,p[i].size(),libusb_error_name(rc));std::fflush(stdout);check(rc,"bulk OUT (power-cycle before retry)");if(sent!=int(p[i].size()))throw std::runtime_error("short transfer; power-cycle before retry");}
     std::cout<<"USB transport complete; CPU execution NOT confirmed. Check UART0.\n";
 }
+static void send(Packets& p,bool reconfig,bool strict_rom=false){Usb u;send_on(u,p,reconfig,strict_rom);}
 static void selftest(){
     Bytes b(5120);for(size_t i=0;i<b.size();i++)b[i]=uint8_t(i);
     auto p=packets(b,0xd0020010,false,false);
@@ -208,13 +209,42 @@ static void auto_boot(const char* loader,const char* app){
     bulk_send(payload,true,true);
     elapsed("total through USB GO ACK",total_start);
 }
+static void handoff_test(const char* loader){
+    std::ifstream f(loader,std::ios::binary);
+    if(!f)throw std::runtime_error("cannot open handoff SRAM loader");
+    Bytes first((std::istreambuf_iterator<char>(f)),{});
+    if(first.empty()||first.size()>11168)throw std::runtime_error("handoff loader size");
+    first.resize(11168,0);
+    auto p=packets(first,0xd0020010,false,false);
+    Usb u;
+    const auto start=Clock::now();
+    send_on(u,p,true,true);
+    elapsed("stage1 ROM upload",start);
+    std::cout<<"Keep the same USB handle open. Wait for HANDOFF EP2 READY on UART.\n"
+             <<"Type READY and press Enter ONLY after that exact message; anything else aborts.\n"<<std::flush;
+    std::string line;
+    if(!std::getline(std::cin,line)||line!="READY")throw std::runtime_error("handoff cancelled; cold reboot");
+    const auto transfer_start=Clock::now();
+    for(unsigned packet=0;packet<2;packet++){
+        Bytes data(packet?37u:512u);
+        for(size_t i=0;i<data.size();i++)data[i]=uint8_t(i*37u+packet*91u+17u);
+        int sent=0;
+        int rc=libusb_bulk_transfer(u.h,2,data.data(),int(data.size()),&sent,3000);
+        check(rc,"same-handle EP2 transfer");
+        if(sent!=int(data.size()))throw std::runtime_error("short transfer; cold reboot");
+        std::printf("Same handle packet %u: %d bytes\n",packet+1,sent);
+    }
+    elapsed("same-handle 549-byte transfer",transfer_start);
+    std::cout<<"Host transport complete; confirm HANDOFF SAME CONNECTION PASS on UART.\n";
+}
 int main(int argc,char** argv){try{
+    if(argc==3&&std::string(argv[1])=="--handoff-test"){handoff_test(argv[2]);return 0;}
     if(argc==4&&std::string(argv[1])=="--boot"){auto_boot(argv[2],argv[3]);return 0;}
     if(argc==3&&std::string(argv[1])=="--load"){bulk_load(argv[2]);return 0;}
     if(argc==2&&std::string(argv[1])=="--bulk-test"){bulk_test();return 0;}
     bool dry=false,full=false,join=false,pad=false,reconfig=true;std::string path;
     for(int i=1;i<argc;i++){std::string a=argv[i];if(a=="--selftest"){selftest();return 0;}else if(a=="--dry-run")dry=true;else if(a=="--full-checksum")full=true;else if(a=="--join-tail")join=true;else if(a=="--pad-vendor-size")pad=true;else if(a=="--no-reconfigure")reconfig=false;else if(!a.empty()&&a[0]!='-'&&path.empty())path=a;else throw std::runtime_error("unknown argument: "+a);}
-    if(path.empty()){std::cout<<"Usage: tq210-dnw IMAGE [--dry-run] [--full-checksum] [--join-tail] [--pad-vendor-size] [--no-reconfigure]\n       tq210-dnw --selftest\n       tq210-dnw --bulk-test\n       tq210-dnw --load DDR_IMAGE\n       tq210-dnw --boot SRAM_LOADER DDR_IMAGE\n";return 1;}
+    if(path.empty()){std::cout<<"Usage: tq210-dnw IMAGE [--dry-run] [--full-checksum] [--join-tail] [--pad-vendor-size] [--no-reconfigure]\n       tq210-dnw --selftest\n       tq210-dnw --bulk-test\n       tq210-dnw --load DDR_IMAGE\n       tq210-dnw --boot SRAM_LOADER DDR_IMAGE\n       tq210-dnw --handoff-test SRAM_LOADER\n";return 1;}
     std::ifstream f(path,std::ios::binary);if(!f)throw std::runtime_error("cannot open image");Bytes b((std::istreambuf_iterator<char>(f)),{});if(b.empty()||b.size()>16368)throw std::runtime_error("invalid image length");
     if(pad){if(b.size()>11168)throw std::runtime_error("cannot pad to vendor size");b.resize(11168,0);}
     auto p=packets(b,0xd0020010,full,join);auto& t=p.back();unsigned sum=unsigned(t[t.size()-2])|(unsigned(t.back())<<8);

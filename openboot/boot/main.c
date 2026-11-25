@@ -314,6 +314,9 @@ static void usb_state(void) {
 #ifdef USB_ENUM_TEST
 #include "usb_enum.inc"
 #endif
+#ifdef USB_HANDOFF_TEST
+#include "usb_handoff.inc"
+#endif
 #endif
 void boot_main(void) {
     wr(0xe2700000,0);
@@ -322,6 +325,9 @@ void boot_main(void) {
     out("\r\nTQ210 OpenBoot v0.3 ROM CLOCKS\r\n[0] SRAM C ENTRY OK\r\n");
 #else
     out("\r\nTQ210 OpenBoot v0.1 EXPERIMENTAL\r\n[0] SRAM ENTRY OK\r\n");
+#endif
+#ifdef USB_HANDOFF_TEST
+    handoff_guard();
 #endif
     if(!clock_init()) {out("CLOCK FAIL\r\n");stop();}
 #ifdef SRAM_ONLY
@@ -341,6 +347,9 @@ void boot_main(void) {
     if(!ram_test()) stop();
     if(!ddr_exec()) {out("DDR EXEC FAIL\r\n");stop();}
     out("[5] DDR EXEC PASS; back in SRAM\r\n");
+#ifdef USB_HANDOFF_TEST
+    handoff_test();
+#endif
     out("OpenBoot diagnostic complete. a=optional DMC0 alias probe, b=DMC1, m=dual-window map test.\r\n");
 #ifdef USB_STATE_PROBE
     out("USB state probe available: lowercase u repeats snapshot.\r\n");
