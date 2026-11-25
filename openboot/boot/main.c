@@ -99,8 +99,14 @@ static int dmc_init(uint32_t base,int bank) {
     uint32_t v=R(base+0x18)|0x6a000000;
     wr(base+0x18,v); wr(base+0x18,v&~2u);
     wr(base+0x00,0x0fff1010); wr(base+0x04,0x002024c0);
+#ifdef DMC0_ROW14
+    /* A/B experiment: change only DMC0 chip geometry to match DMC1's row field. */
+    wr(base+0x08,bank?0x40e01323:0x20e01323);
+    wr(base+0x0c,bank?0xffe01323:0x1ee01343);
+#else
     wr(base+0x08,bank?0x40e01323:0x20e01343);
     wr(base+0x0c,bank?0xffe01323:0x1ee01343);
+#endif
     wr(base+0x14,0xff000000); wr(base+0x28,0xffff00ff);
     wr(base+0x30,DDR_REFRESH); wr(base+0x34,0x27233309);
     wr(base+0x38,bank?0x23240303:0x23240304); wr(base+0x3c,0x08c80232);
@@ -155,6 +161,57 @@ static void alias_probe(uint32_t base) {
     for(unsigned i=6;i>0;i--) wr(base+off[i-1],original[i-1]);
     out("Sample complete; inspect values for aliases\r\n");
 }
+
+/* Two phases over BOTH 512 MiB windows; samples each 16 MiB block at
+   +64 KiB and its last word, plus lower address bits. Never test outside
+   configured apertures. Standalone RAM only: invalid addresses can hang.
+   Save all originals before any writes; restore after both verification passes. */
+#define NS_PER_BANK 86u
+#define NS_ALL (2u*NS_PER_BANK)
+static uint32_t sample_addr(unsigned i) {
+    uint32_t base=i>=NS_PER_BANK?0x40000000u:0x20000000u;
+    unsigned j=i%NS_PER_BANK;
+    if(j<64u) {
+        uint32_t block=(j/2u)<<24;
+        return base+block+((j&1u)?0x00fffffcu:0x10000u);
+    }
+    /* Walking bits 2..23 from base; avoids duplicate +64 KiB sample. */
+    unsigned bit=j-64u+2u;
+    return base+(bit==16u?0u:(1u<<bit));
+}
+static void map_probe(void) {
+    uint32_t saved[NS_ALL];
+    unsigned errors[2]={0,0};
+    out("MAP TEST: 512 MiB windows x2, sparse samples; not full stress\r\n");
+    reg("DMC0 MEMCONFIG0=",R(0xf0000008u));
+    reg("DMC1 MEMCONFIG0=",R(0xf1400008u));
+    for(unsigned i=0;i<NS_ALL;i++) {
+        uint32_t a=sample_addr(i);
+        if(i%NS_PER_BANK<64u && !((i%NS_PER_BANK)&1u)) reg("PROBE BLOCK=",a);
+        saved[i]=R(a);
+    }
+    for(unsigned pass=0;pass<2;pass++) {
+        for(unsigned k=0;k<NS_ALL;k++) {
+            unsigned i=pass?NS_ALL-1u-k:k;
+            uint32_t a=sample_addr(i);
+            wr(a,a^(pass?0x5aa5a55au:0xa55a5aa5u));
+        }
+        sync();
+        for(unsigned i=0;i<NS_ALL;i++) {
+            uint32_t a=sample_addr(i),expected=a^(pass?0x5aa5a55au:0xa55a5aa5u),actual=R(a);
+            if(actual!=expected) {
+                unsigned bank=i>=NS_PER_BANK;
+                if(errors[bank]<12u) {reg("MISMATCH ADDR=",a);reg("EXPECTED=",expected);reg("ACTUAL=",actual);}
+                errors[bank]++;
+            }
+        }
+    }
+    for(unsigned i=0;i<NS_ALL;i++) wr(sample_addr(i),saved[i]);
+    reg("DMC0 MAP ERRORS=",errors[0]); reg("DMC1 MAP ERRORS=",errors[1]);
+    if(errors[0]||errors[1]) out("MAP SAMPLE FAIL\r\n");
+    else out("MAP SAMPLE PASS: no alias in sampled addresses; capacity/stress unconfirmed\r\n");
+}
+
 #endif
 void boot_main(void) {
     wr(0xe2700000,0);
@@ -169,14 +226,17 @@ void boot_main(void) {
     out("SRAM TEST PASS; DDR not touched\r\n");
     for(;;) if(R(UART+0x10)&1) { (void)B(UART+0x24); out("SRAM TEST PASS; DDR not touched\r\n"); }
 #else
+#ifdef DMC0_ROW14
+    out("OpenBoot v0.4 A/B: DMC0 geometry 0x1323\r\n");
+#endif
     drive_strength();
     if(!dmc_init(0xf0000000,0)) {out("DMC0 FAIL\r\n");stop();}
     if(!dmc_init(0xf1400000,1)) {out("DMC1 FAIL\r\n");stop();}
     if(!ram_test()) stop();
     if(!ddr_exec()) {out("DDR EXEC FAIL\r\n");stop();}
     out("[5] DDR EXEC PASS; back in SRAM\r\n");
-    out("OpenBoot diagnostic complete. a=optional DMC0 alias probe, b=DMC1.\r\n");
-    for(;;) if(R(UART+0x10)&1) {unsigned c=B(UART+0x24);if(c=='a')alias_probe(RAM0);if(c=='b')alias_probe(RAM1);}
+    out("OpenBoot diagnostic complete. a=optional DMC0 alias probe, b=DMC1, m=dual-window map test.\r\n");
+    for(;;) if(R(UART+0x10)&1) {unsigned c=B(UART+0x24);if(c=='a')alias_probe(RAM0);if(c=='b')alias_probe(RAM1);if(c=='m')map_probe();}
 #endif
     stop();
 }
