@@ -8,7 +8,13 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+/* Direct source-tree UAPI inclusion: headers_install normally strips
+ * sparse's __user annotation. Ubuntu 20.04's installed MTD header may
+ * predate MEMREAD, so use the matching 6.18 definition.
+ */
+#define __user
 #include "../kernel-6.18/include/uapi/mtd/mtd-abi.h"
+#undef __user
 
 #define PAGE 2048
 #define OOB 64
