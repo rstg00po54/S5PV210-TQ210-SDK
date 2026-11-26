@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0+
 /* TQ210 USB device handoff: preserve the ROM/OpenBoot PHY configuration. */
 #include <command.h>
+#include <env.h>
+#include <g_dnl.h>
 #include <asm/io.h>
 #include <asm/arch/cpu.h>
 #include <linux/bitops.h>
@@ -81,6 +83,9 @@ int board_usb_init(int index, enum usb_init_type init)
 		puts("TQ210 USB: FIFO allocation exceeds hardware capacity\n");
 		return -ENOSPC;
 	}
+	/* Fallback is only for a single private test board, not unique. */
+	if (!env_get("serialno"))
+		g_dnl_set_serialnumber("TQ210-TEST");
 	if (probed)
 		return 0;
 	ret = dwc2_udc_probe(&tq210_otg);

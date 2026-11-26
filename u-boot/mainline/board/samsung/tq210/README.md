@@ -43,8 +43,12 @@ results do not validate all DDR, DMA cache coherency, or storage.
 
 The iROM/OpenBoot PHY and clock gate are preserved; the Goni PMIC/PHY
 power sequence is not used. DWC2 DMA is enabled by the existing UDC.
-The lab USB identifier matches the upstream Goni example (04e8:6601);
-not a VID/PID assignment for a product. Fastboot flash/erase, storage,
+USB VID/PID 1209:0001 is reserved by pid.codes for private testing only.
+It is not universally unique and must not be used outside test environments
+or for distributed/sold/manufactured devices. See https://pid.codes/1209/0001/.
+The previous 04e8:6601 collided with Linux visor; unbinding visor made
+Fastboot getvar version return 0.4. The board enumerated at 480 Mbit/s.
+Legacy fastboot clients may require -i 0x1209. Fastboot flash/erase, storage,
 and OEM shell execution are disabled.
 
 First test, at the U-Boot UART shell:
@@ -62,3 +66,7 @@ with cache enabled to test DMA cache coherency. Default RAM buffer:
 cold power-cycle; do not continue using a potentially active DMA engine.
 
 This USB implementation is not yet built or hardware validated.
+
+Hardware validation on a245779: USB high-speed enumeration and Fastboot
+getvar version=0.4 passed after manually unbinding visor. New VID/PID,
+serial descriptor, file download and DMA cache coherency remain untested.
