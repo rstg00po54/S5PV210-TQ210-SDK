@@ -58,3 +58,18 @@ First objective is early console and successful kernel initialization.
 Without initramfs or rootfs, a final VFS panic is expected and does not
 by itself imply a platform failure. Do not use the U-Boot control DT
 as a Linux DT. This native board port has not been cross-compiled or booted.
+
+## First hardware boot (2026-11-26)
+
+Native board port d271f60 built with GCC 10.5.0 and binutils 2.34.
+zImage: 2035056 bytes; DTB: 23224 bytes. Fastboot RAM downloads and
+bootz succeeded. Linux 6.18.0-tq210 reached root filesystem mounting.
+All four PL192 VICs detected; Samsung clocksource selected; UART0
+transitioned from earlycon to ttySAC0. The whole 1 GiB DDR range was
+recognized (1031916 KiB available), VFP and devtmpfs initialized.
+Reported PLL rates: APLL 800 MHz, MPLL 667 MHz. Final VFS panic
+unknown-block(0,0) was expected with no root filesystem or initramfs.
+Unresolved diagnostics: pinctrl wakeup device link, cache hierarchy
+reporting, Cortex-A8 Spectre v2 mitigation warning. No claim of full
+peripheral validation or measured oscillator accuracy. Next: RAM-only
+initramfs with an ARM userspace and /init.

@@ -84,3 +84,13 @@ DWC2 hardware: GSNPSID=4f54281a GHWCFG3=1e8084e8 GHWCFG4=fff04030;
 FIFO 7808 words, 15 IN endpoints, GUSBCFG=40001408.
 The new test VID/PID and serial descriptor in 1039a7c have not yet
 been verified. No storage writes or Linux boot tested.
+
+### New USB identity hardware validation (2026-11-26)
+
+Rebuilt U-Boot with the private-test 1209:0001 identity and fallback
+serial TQ210-TEST. Ubuntu `sudo fastboot devices` reports TQ210-TEST;
+`sudo fastboot getvar version` returns 0.4 in 0.003 s. `lsusb -t`
+reports vendor-specific interface, no bound kernel driver, 480M.
+The previous visor conflict is resolved on this host. Unprivileged
+access still requires local USB permissions (udev); root access works.
+Large transfers with the new identity have not yet been retested.
