@@ -18,10 +18,11 @@ for arg in "$@"; do
         --bch-rw) variant=bch-rw ;;
         --ubi) variant=ubi ;;
         --bl1-probe) variant=bl1-probe ;;
+        --bl2-probe) variant=bl2-probe ;;
         --nand-rootfs) variant=nand-rootfs ;;
         --ready) ready=yes ;;
         --pack-only) pack_only=yes ;;
-        *) echo "Usage: $0 [--basic|--nand|--ecc|--rwtest|--bch-rw|--ubi|--bl1-probe|--nand-rootfs] [--ready|--pack-only]" >&2; exit 2 ;;
+        *) echo "Usage: $0 [--basic|--nand|--ecc|--rwtest|--bch-rw|--ubi|--bl1-probe|--bl2-probe|--nand-rootfs] [--ready|--pack-only]" >&2; exit 2 ;;
     esac
 done
 if [ "$variant" = basic ]; then
@@ -33,6 +34,9 @@ elif [ "$variant" = ubi ] || [ "$variant" = nand-rootfs ]; then
 elif [ "$variant" = bl1-probe ]; then
     boot="$linux/build-tq210-nand/arch/arm/boot"
     dtb="$boot/dts/samsung/s5pv210-tq210-nand-bl1.dtb"
+elif [ "$variant" = bl2-probe ]; then
+    boot="$linux/build-tq210-nand/arch/arm/boot"
+    dtb="$boot/dts/samsung/s5pv210-tq210-nand-bl2.dtb"
 elif [ "$variant" = bch-rw ]; then
     boot="$linux/build-tq210-nand/arch/arm/boot"
     dtb="$boot/dts/samsung/s5pv210-tq210-nand-bch.dtb"

@@ -1016,3 +1016,25 @@ Expected DDR EXEC PASS, NAND ID PASS, BL1 checksum 00023f39,
 NAND BL1 BCH8 READ PASS, NAND READ TEST PASS.
 If size exceeds BL1 budget, optimize before packing.
 Compiler and hardware validation pending.
+
+### SRAM NAND reader PASS; BL2 slot installation
+
+2026-11-26 rom_nand_read through USB passed DDR scratch/exec,
+NAND ID, BL1 BCH8 read and checksum 0x00023f39. Existing BL1
+stays untouched. Loader now accepts exactly all-FF data+parity
+sectors after successful controller completion (slot padding).
+No other erased-sector fallback added.
+
+New --bl2-probe rescue DT: 0..1 MiB RO, 1..3 MiB bl2-slot RW,
+3..32 MiB RO, UBI 32 MiB..1 GiB RO. nand-bl2-probe.c verifies
+header and payload CRC, length, fixed partition offset/size,
+BCH8, all slot blocks good and blank; sequentially programs
+only packed pages and verifies raw and ECC readback. No erase.
+Build kernel DT and host packer output, compile utility.
+Use USB rescue --bl2-probe (interrupt autoboot, tqboot).
+Check then explicitly program with --program-blank-bl2.
+After success stop ADB, sync, power-cycle USB mode, load
+headerless rom_nand_boot.bin via USB; it reads BL1 and BL2,
+CRC checks, jumps to U-Boot; U-Boot then auto-boots Linux.
+Do not replace BL1 until this whole path passes.
+New code compile/hardware validation pending.

@@ -59,6 +59,7 @@ static int read_page(unsigned p, uint8_t *dst)
     for (unsigned s = 0; s < 4; s++) {
         uint32_t bc = MMIO32(BCH), ct = MMIO32(BCH+0x20) & ~BIT(2);
         uint32_t sec, erl[4], erp[2], seen[8], bits = 0;
+        unsigned blank = 0xff;
         if (!begin_page(p, s*512u))
             goto fail;
         mmio_write32(BCH, (511u<<16)|3);
@@ -67,14 +68,16 @@ static int read_page(unsigned p, uint8_t *dst)
         select_nand(SEL|BIT(5));
         mmio_write32(BCH+0x20, (ct & ~BIT(16))|BIT(2));
         select_nand(SEL & ~BIT(7));
-        for (unsigned i = 0; i < 512; i++)
+        for (unsigned i = 0; i < 512; i++) {
             dst[i] = MMIO8(NF+16);
+            blank &= dst[i];
+        }
         MMIO8(NF+8) = 0x05;
         column(PAGE+12u+s*13u);
         MMIO8(NF+8) = 0xe0;
         delay();
         for (unsigned i = 0; i < 13; i++)
-            (void)MMIO8(NF+16);
+            blank &= MMIO8(NF+16);
         select_nand(SEL);
         int ok = mmio_wait_mask(BCH+0x30, BIT(31)|BIT(24), BIT(24));
         sec = MMIO32(BCH+0x40);
@@ -87,7 +90,13 @@ static int read_page(unsigned p, uint8_t *dst)
         mmio_write32(BCH+0x30, BIT(24));
         select_nand(OFF);
         unsigned count = sec & 15u;
-        if (!ok || count > 8 || (sec & BIT(29)))
+        if (!ok)
+            goto fail;
+        if (blank == 0xff) {
+            dst += 512;
+            continue;
+        }
+        if (count > 8 || (sec & BIT(29)))
             goto fail;
         for (unsigned i = 0; i < count; i++) {
             unsigned pos = (erl[i/2] >> (16*(i%2))) & 1023u;
