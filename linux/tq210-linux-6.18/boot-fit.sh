@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# Single FIT USB RAM boot; never opens UART or writes flash.
+# Single FIT USB RAM boot; never opens UART; --rwtest explicitly starts a kernel scratch NAND write test.
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 sdk=$(CDPATH= cd -- "$here/../.." && pwd)
@@ -13,13 +13,17 @@ for arg in "$@"; do
         --basic) variant=basic ;;
         --nand) variant=nand ;;
         --ecc) variant=ecc ;;
+        --rwtest) variant=rwtest ;;
         --ready) ready=yes ;;
-        *) echo "Usage: $0 [--basic|--nand|--ecc] [--ready]" >&2; exit 2 ;;
+        *) echo "Usage: $0 [--basic|--nand|--ecc|--rwtest] [--ready]" >&2; exit 2 ;;
     esac
 done
 if [ "$variant" = basic ]; then
     boot="$linux/build-tq210-6.18/arch/arm/boot"
     dtb="$boot/dts/samsung/s5pv210-tq210.dtb"
+elif [ "$variant" = rwtest ]; then
+    boot="$linux/build-tq210-nand/arch/arm/boot"
+    dtb="$boot/dts/samsung/s5pv210-tq210-nand-rwtest.dtb"
 elif [ "$variant" = ecc ]; then
     boot="$linux/build-tq210-nand/arch/arm/boot"
     dtb="$boot/dts/samsung/s5pv210-tq210-nand-ecc.dtb"

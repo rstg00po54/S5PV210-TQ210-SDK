@@ -493,3 +493,33 @@ After enabling ADB and pushing the existing nand-ecc-probe tool:
     adb shell dmesg | grep -E 'SLC1|BCH8'
 
 Use host grep, not target grep, if BusyBox lacks -E.
+
+### Opt-in hardware BCH8 scratch write/erase experiment
+
+Operator explicitly chose to discard factory data without backup.
+Do not erase the whole device yet. New --rwtest DT enables a
+single boot-time experiment before MTD publication on fixed block
+8159 (0x3fbe0000, 128 KiB). Exact ID and geometry are required,
+the NAND core must report the block good, and every byte of all
+64 pages including OOB must read FF twice before ANY erase or
+program. A nonblank or bad block is refused, not silently replaced.
+The separate BCH engine (0xb0e20000) uses the existing bare-metal
+encode/decode register sequence, 512-byte sectors, 13-byte parity,
+OOB 12..63. Test initial erase, program a known page with HW parity,
+raw verification, clean decode, program a second page with deliberate
+1 and 8 single-bit discrepancies and original parity, verify
+correction in RAM, then erase and verify all 64 pages. A failure
+stops immediately; no auto retry or cleanup erase. On success the
+block is blank again. MTD stays READ ONLY even in this variant.
+Normal --nand and --ecc boot options do not run the test.
+Only use --rwtest when intentionally authorizing this block experiment.
+
+    sh tq210-linux-6.18/build-nand-kernel.sh
+    sh tq210-linux-6.18/boot-fit.sh --rwtest
+
+On target:
+    dmesg | grep RWTEST
+    cat /proc/mtd
+
+This is the hardware validation stage, not yet a general writable
+MTD driver. Cross-compile and board test pending.

@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
+#include "s5pv210-tq210-nand.dts"
+
+&{/soc/nand-controller@b0e00000} {
+	reg = <0xb0e00000 0x1000>, <0xb0e20000 0x1000>;
+	embedsky,experimental-bch8-rwtest;
+};

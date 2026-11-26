@@ -4,7 +4,8 @@
  * Register sequence and pin routing from runtime/drivers/nand.c.
  * Optional experimental factory SLC 1-bit ECC, based on Samsung's
  * GPLv2 s3c_nand.c (Copyright (c) 2009 Samsung Electronics Co., Ltd.).
- * Never issue program/erase or data-out cycles.
+ * Normal MTD operations remain read only. Explicit scratch boot tests
+ * can program and erase one checked blank block before MTD registration.
  */
 #include <linux/bitops.h>
 #include <linux/clk.h>
@@ -17,6 +18,7 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/sizes.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 
 #define NFCONF 0x00
@@ -58,6 +60,7 @@ struct tq210_nand {
 	struct nand_chip chip;
 	void __iomem *base;
 	bool hw_ecc;
+	bool scratch_test;
 	void __iomem *bch;
 	const u8 *bch_expected;
 	u32 bch_column;
@@ -423,6 +426,290 @@ static const struct nand_controller_ops tq210_nand_ops = {
 	.exec_op = tq210_exec_op,
 };
 
+/* Explicit USB-boot scratch experiment; only before MTD publication.
+ * No generic MTD write operation is enabled. Never retry a failed test.
+ */
+#define TQ_SCRATCH_BLOCK 8159U
+#define TQ_SCRATCH_PAGE (TQ_SCRATCH_BLOCK * 64U)
+#define TQ_PAGE 2048U
+#define TQ_OOB 64U
+#define TQ_RAW (TQ_PAGE + TQ_OOB)
+#define BCH_ENCODE_DONE BIT(25)
+
+static void tq210_scratch_select(struct tq210_nand *n)
+{
+	writel(NF_ENABLE | NF_CE1 | NF_MECCLOCK, n->base + NFCONT);
+}
+
+static void tq210_scratch_deselect(struct tq210_nand *n)
+{
+	writel(NF_ENABLE | NF_CE0 | NF_CE1 | NF_MECCLOCK, n->base + NFCONT);
+}
+
+static void tq210_scratch_row(struct tq210_nand *n, unsigned int page)
+{
+	writeb(page & 0xff, n->base + NFADDR);
+	writeb((page >> 8) & 0xff, n->base + NFADDR);
+	writeb((page >> 16) & 0xff, n->base + NFADDR);
+}
+
+static int tq210_scratch_ready(struct tq210_nand *n)
+{
+	u32 status;
+
+	udelay(2);
+	return readl_poll_timeout(n->base + NFSTAT, status,
+				  status & NF_READY, 1, 100000);
+}
+
+static int tq210_scratch_status(struct tq210_nand *n)
+{
+	u8 status;
+	int ret = tq210_scratch_ready(n);
+
+	if (ret)
+		return ret;
+	writeb(NAND_CMD_STATUS, n->base + NFCMD);
+	udelay(2);
+	status = readb(n->base + NFDATA);
+	dev_info(nand_to_mtd(&n->chip)->dev.parent, "RWTEST NAND status=%02x\n", status);
+	return (status & 0xc1) == 0xc0 ? 0 : -EIO;
+}
+
+static int tq210_scratch_blank(struct nand_chip *chip, u8 *raw)
+{
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < 64; i++) {
+		ret = nand_read_page_op(chip, TQ_SCRATCH_PAGE + i, 0, raw, TQ_RAW);
+		if (ret)
+			return ret;
+		if (memchr_inv(raw, 0xff, TQ_RAW))
+			return -ENOTEMPTY;
+	}
+	return 0;
+}
+
+static int tq210_scratch_erase(struct tq210_nand *n)
+{
+	int ret;
+
+	tq210_scratch_select(n);
+	ret = tq210_scratch_status(n);
+	if (ret)
+		goto out;
+	writeb(NAND_CMD_ERASE1, n->base + NFCMD);
+	tq210_scratch_row(n, TQ_SCRATCH_PAGE);
+	writeb(NAND_CMD_ERASE2, n->base + NFCMD);
+	ret = tq210_scratch_status(n);
+out:
+	tq210_scratch_deselect(n);
+	return ret;
+}
+
+static int tq210_scratch_program(struct tq210_nand *n, unsigned int page,
+				  u8 *raw, bool encode)
+{
+	u32 conf = readl(n->base + NFCONF);
+	u32 bconf = readl(n->bch + BCH_CONF);
+	u32 bcont = readl(n->bch + BCH_CONT) & ~BCH_INIT;
+	u32 status;
+	unsigned int step, i;
+	int ret;
+
+	if (page != TQ_SCRATCH_PAGE && page != TQ_SCRATCH_PAGE + 1)
+		return -EPERM;
+
+	tq210_scratch_select(n);
+	ret = tq210_scratch_status(n);
+	if (ret)
+		goto out;
+	writel(conf | NF_ECC_MODE, n->base + NFCONF);
+	writeb(NAND_CMD_SEQIN, n->base + NFCMD);
+	writeb(0, n->base + NFADDR);
+	writeb(0, n->base + NFADDR);
+	tq210_scratch_row(n, page);
+	udelay(2);
+	for (step = 0; step < 4; step++) {
+		if (encode) {
+			writel((511U << 16) | 3U, n->bch + BCH_CONF);
+			writel(BCH_DECODE_DONE | BCH_ENCODE_DONE, n->bch + BCH_STAT);
+			writel(BCH_ENCODE, n->bch + BCH_CONT);
+			writel(NF_ENABLE | NF_CE1 | NF_MECCLOCK | NF_INITMECC,
+			       n->base + NFCONT);
+			writel(BCH_ENCODE | BCH_INIT, n->bch + BCH_CONT);
+			writel(NF_ENABLE | NF_CE1, n->base + NFCONT);
+		}
+		for (i = 0; i < TQ_ECC_STEP; i++)
+			writeb(raw[step * TQ_ECC_STEP + i], n->base + NFDATA);
+		writel(NF_ENABLE | NF_CE1 | NF_MECCLOCK, n->base + NFCONT);
+		if (!encode)
+			continue;
+		ret = readl_poll_timeout(n->bch + BCH_STAT, status,
+					 (status & (BCH_BUSY | BCH_ENCODE_DONE)) ==
+					 BCH_ENCODE_DONE, 1, 100000);
+		if (ret) {
+			/* No PAGEPROG issued: abort the unconfirmed input. */
+			writeb(NAND_CMD_RESET, n->base + NFCMD);
+			(void)tq210_scratch_ready(n);
+			goto out;
+		}
+		for (i = 0; i < BCH_PARITY_BYTES; i++)
+			raw[TQ_PAGE + BCH_PARITY_OFFSET + step * BCH_PARITY_BYTES + i] =
+				readl(n->bch + 0x90 + (i / 4) * 4) >> ((i % 4) * 8);
+	}
+	if (encode && !memchr_inv(raw + TQ_PAGE + BCH_PARITY_OFFSET, 0xff, 52)) {
+		ret = -EIO;
+		writeb(NAND_CMD_RESET, n->base + NFCMD);
+		(void)tq210_scratch_ready(n);
+		goto out;
+	}
+	for (i = 0; i < TQ_OOB; i++)
+		writeb(raw[TQ_PAGE + i], n->base + NFDATA);
+	writeb(NAND_CMD_PAGEPROG, n->base + NFCMD);
+	ret = tq210_scratch_status(n);
+out:
+	tq210_scratch_deselect(n);
+	writel(bconf, n->bch + BCH_CONF);
+	writel(bcont, n->bch + BCH_CONT);
+	writel(BCH_DECODE_DONE | BCH_ENCODE_DONE, n->bch + BCH_STAT);
+	writel(conf, n->base + NFCONF);
+	return ret;
+}
+
+/* Correct scratch data in RAM only, and verify against a known pattern. */
+static int tq210_scratch_decode(struct nand_chip *chip, unsigned int page,
+				 const u8 *raw, const u8 *expected,
+				 unsigned int want_bits)
+{
+	struct tq210_nand *n = nand_get_controller_data(chip);
+	struct device *dev = nand_to_mtd(chip)->dev.parent;
+	u8 data[TQ_ECC_STEP];
+	unsigned int step, i, count, pos, pat, bits = 0;
+	int ret;
+
+	for (step = 0; step < 4; step++) {
+		n->bch_column = TQ_PAGE + BCH_PARITY_OFFSET + step * BCH_PARITY_BYTES;
+		n->bch_expected = raw + n->bch_column;
+		n->bch_parity_match = false;
+		ret = nand_read_page_op(chip, page, step * TQ_ECC_STEP, data, sizeof(data));
+		n->bch_expected = NULL;
+		if (ret)
+			return ret;
+		count = n->bch_secstat & 15;
+		dev_info(dev, "RWTEST decode page=%u sector=%u stat=%08x sec=%08x count=%u\n",
+			 page, step, n->bch_status, n->bch_secstat, count);
+		if (!n->bch_parity_match ||
+		    memcmp(data, raw + step * TQ_ECC_STEP, sizeof(data)) ||
+		    count > 8 || (n->bch_secstat & BIT(29)))
+			return -EBADMSG;
+		for (i = 0; i < count; i++) {
+			pos = (n->bch_erl[i / 2] >> ((i % 2) * 16)) & 1023;
+			pat = (n->bch_erp[i / 4] >> ((i % 4) * 8)) & 255;
+			if (pos >= TQ_ECC_STEP + BCH_PARITY_BYTES || !pat)
+				return -EBADMSG;
+			bits += hweight8(pat);
+			if (pos < TQ_ECC_STEP)
+				data[pos] ^= pat;
+			dev_info(dev, "RWTEST error position=%u pattern=%02x\n", pos, pat);
+		}
+		if (memcmp(data, expected + step * TQ_ECC_STEP, sizeof(data)))
+			return -EBADMSG;
+	}
+	return bits == want_bits ? 0 : -EBADMSG;
+}
+
+static int tq210_run_scratch(struct nand_chip *chip)
+{
+	struct tq210_nand *n = nand_get_controller_data(chip);
+	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct device *dev = mtd->dev.parent;
+	static const u8 id[] = { 0x01, 0xd3, 0xd1, 0x95, 0x58 };
+	u8 *storage, *expected, *injected, *raw;
+	unsigned int i;
+	int ret;
+
+	if (!n->bch || chip->id.len < sizeof(id) ||
+	    memcmp(chip->id.data, id, sizeof(id)))
+		return -ENODEV;
+
+	storage = kmalloc(3 * TQ_RAW, GFP_KERNEL);
+	if (!storage)
+		return -ENOMEM;
+	expected = storage;
+	injected = storage + TQ_RAW;
+	raw = storage + 2 * TQ_RAW;
+
+	dev_warn(dev, "RWTEST opt-in: ONLY block %u offset=%08x; no backup\n",
+		 TQ_SCRATCH_BLOCK, TQ_SCRATCH_BLOCK * 131072U);
+	/* NAND core has already scanned bad blocks. Check its result, then
+	 * require two full raw passes including every OOB byte to be blank.
+	 */
+	ret = mtd->_block_isbad(mtd, (loff_t)TQ_SCRATCH_BLOCK * 131072);
+	if (ret) {
+		ret = ret < 0 ? ret : -EIO;
+		goto free;
+	}
+	nand_select_target(chip, 0);
+	ret = tq210_scratch_blank(chip, raw);
+	if (!ret)
+		ret = tq210_scratch_blank(chip, raw);
+	if (ret)
+		goto finish;
+	dev_info(dev, "RWTEST blank block checked twice PASS\n");
+	ret = tq210_scratch_erase(n);
+	if (!ret)
+		ret = tq210_scratch_blank(chip, raw);
+	if (ret)
+		goto finish;
+	dev_info(dev, "RWTEST initial erase + raw blank verify PASS\n");
+
+	for (i = 0; i < TQ_PAGE; i++)
+		expected[i] = (u8)(i * 37U + (i >> 3) + 0x5a);
+	memset(expected + TQ_PAGE, 0xff, TQ_OOB);
+	ret = tq210_scratch_program(n, TQ_SCRATCH_PAGE, expected, true);
+	if (!ret)
+		ret = nand_read_page_op(chip, TQ_SCRATCH_PAGE, 0, raw, TQ_RAW);
+	if (!ret && memcmp(expected, raw, TQ_RAW))
+		ret = -EIO;
+	if (ret)
+		goto finish;
+	dev_info(dev, "RWTEST BCH8 encode + program + raw page verify PASS\n");
+	ret = tq210_scratch_decode(chip, TQ_SCRATCH_PAGE, raw, expected, 0);
+	if (ret)
+		goto finish;
+	dev_info(dev, "RWTEST clean BCH8 decode PASS\n");
+
+	memcpy(injected, expected, TQ_RAW);
+	injected[17] ^= 1;
+	for (i = 0; i < 8; i++)
+		injected[512 + 23 + i * 17] ^= 1;
+	ret = tq210_scratch_program(n, TQ_SCRATCH_PAGE + 1, injected, false);
+	if (!ret)
+		ret = nand_read_page_op(chip, TQ_SCRATCH_PAGE + 1, 0, raw, TQ_RAW);
+	if (!ret && memcmp(injected, raw, TQ_RAW))
+		ret = -EIO;
+	if (ret)
+		goto finish;
+	ret = tq210_scratch_decode(chip, TQ_SCRATCH_PAGE + 1, raw, expected, 9);
+	if (ret)
+		goto finish;
+	dev_info(dev, "RWTEST BCH8 injected 1+8 bits corrected in RAM PASS\n");
+
+	ret = tq210_scratch_erase(n);
+	if (!ret)
+		ret = tq210_scratch_blank(chip, raw);
+	if (!ret)
+		dev_info(dev, "RWTEST final erase + 64 raw pages FF PASS\n");
+finish:
+	nand_deselect_target(chip);
+	tq210_scratch_deselect(n);
+free:
+	kfree(storage);
+	return ret;
+}
+
 static int tq210_nand_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -446,7 +733,12 @@ static int tq210_nand_probe(struct platform_device *pdev)
 
 	n->hw_ecc = of_property_read_bool(dev->of_node,
 					 "embedsky,experimental-slc-ecc");
-	if (n->hw_ecc && platform_get_resource(pdev, IORESOURCE_MEM, 1)) {
+	n->scratch_test = of_property_read_bool(dev->of_node,
+					       "embedsky,experimental-bch8-rwtest");
+	if (n->hw_ecc && n->scratch_test)
+		return -EINVAL;
+	if ((n->hw_ecc || n->scratch_test) &&
+	    platform_get_resource(pdev, IORESOURCE_MEM, 1)) {
 		n->bch = devm_platform_ioremap_resource(pdev, 1);
 		if (IS_ERR(n->bch))
 			return PTR_ERR(n->bch);
@@ -478,6 +770,13 @@ static int tq210_nand_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret, "read-only NAND scan failed\n");
 
+	if (n->scratch_test) {
+		ret = tq210_run_scratch(chip);
+		if (ret)
+			dev_err(dev, "RWTEST FAIL/REFUSED ret=%d; no automatic retry or cleanup erase\n", ret);
+		else
+			dev_info(dev, "NAND RWTEST PASS\n");
+	}
 	mtd->flags &= ~MTD_WRITEABLE;
 	ret = mtd_device_register(mtd, NULL, 0);
 	if (ret) {
