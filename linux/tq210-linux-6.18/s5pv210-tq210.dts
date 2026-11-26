@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: GPL-2.0
+/dts-v1/;
+#include "s5pv210.dtsi"
+
+/ {
+	model = "EmbedSky TQ210 CoreB (OpenBoot RAM boot)";
+	compatible = "embedsky,tq210", "samsung,s5pv210";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		bootargs = "console=ttySAC0,115200n8 earlycon ignore_loglevel clk_ignore_unused";
+	};
+
+	memory@20000000 {
+		device_type = "memory";
+		reg = <0x20000000 0x20000000
+		       0x40000000 0x20000000>;
+	};
+};
+
+/* OpenBoot ROM clock calculations assume a 24 MHz PLL input.
+ * Set both possible input rates for initial diagnosis; verify the
+ * selected physical oscillator against OM_STAT and the board schematic.
+ */
+&xxti {
+	clock-frequency = <24000000>;
+};
+
+&xusbxti {
+	clock-frequency = <24000000>;
+};
+
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0_data>;
+	status = "okay";
+};
+
+/* Leave storage, USB and unverified board peripherals disabled.
+ * SoC VIC and PWM clocksource nodes are inherited from s5pv210.dtsi.
+ */
+&watchdog {
+	status = "disabled";
+};
