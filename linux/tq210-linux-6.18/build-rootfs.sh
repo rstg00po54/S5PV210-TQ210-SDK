@@ -35,9 +35,9 @@ printf '%s  %s\n' b8cc24c9574d809e7279c3be349795c5d5ceb6fdf19ca709f80cde50e47de3
 # Start with a minimal config, not a networking/desktop distribution.
 make -C "$bb" ARCH=arm CROSS_COMPILE="$cross" CC="$cc" allnoconfig
 cfg="$kernel/scripts/config"
-applets="kill sh cat ls cp mv rm mkdir rmdir ln chmod chown touch echo printf pwd basename dirname head tail wc sort uniq grep sed cut tr find xargs tee dd sync df du free ps top uname uptime dmesg mount umount hostname sleep setsid cttyhack stty clear id date hexdump od true false"
+applets="test kill sh cat ls cp mv rm mkdir rmdir ln chmod chown touch echo printf pwd basename dirname head tail wc sort uniq grep sed cut tr find xargs tee dd sync df du free ps top uname uptime dmesg mount umount hostname sleep setsid cttyhack stty clear id date hexdump od true false"
 # sh is a shell choice, the other applet names match BusyBox Kconfig.
-for opt in STATIC BUSYBOX LFS SHOW_USAGE FEATURE_VERBOSE_USAGE ASH SH_IS_ASH ASH_JOB_CONTROL ASH_EXPAND_PRMT FEATURE_EDITING FEATURE_EDITING_HISTORY FEATURE_TOP_INTERACTIVE FEATURE_TOP_CPU_USAGE_PERCENTAGE; do
+for opt in STATIC BUSYBOX LFS SHOW_USAGE FEATURE_VERBOSE_USAGE ASH SH_IS_ASH ASH_JOB_CONTROL ASH_EXPAND_PRMT ASH_TEST FEATURE_SH_MATH TEST1 FEATURE_EDITING FEATURE_EDITING_HISTORY FEATURE_EDITING_FANCY_PROMPT FEATURE_TOP_INTERACTIVE FEATURE_TOP_CPU_USAGE_PERCENTAGE; do
     "$cfg" --file "$bb/.config" --enable "$opt"
 done
 "$cfg" --file "$bb/.config" --disable SH_IS_NONE --disable SH_IS_HUSH
@@ -48,7 +48,7 @@ for applet in $applets; do
 done
 # Resolve Kconfig dependencies. Oldconfig accepts defaults for any new choices.
 yes '' | make -C "$bb" ARCH=arm CROSS_COMPILE="$cross" CC="$cc" oldconfig
-for opt in STATIC ASH SH_IS_ASH MOUNT UMOUNT SETSID CTTYHACK HOSTNAME UNAME SLEEP LS FREE PS TOP; do
+for opt in STATIC ASH SH_IS_ASH ASH_TEST TEST TEST1 FEATURE_SH_MATH MOUNT UMOUNT SETSID CTTYHACK HOSTNAME UNAME SLEEP LS FREE PS TOP; do
     grep -qx "CONFIG_${opt}=y" "$bb/.config" || {
         echo "BusyBox required config missing: $opt" >&2; exit 1;
     }
@@ -88,6 +88,7 @@ EOF
 for applet in $applets; do
     printf 'slink /bin/%s busybox 0777 0 0\n' "$applet" >> "$manifest"
 done
+printf 'slink /bin/[ busybox 0777 0 0\n' >> "$manifest"
 printf 'root:x:0:0:root:/root:/bin/sh\n' > "$out/passwd"
 printf 'root:x:0:\n' > "$out/group"
 printf 'file /etc/passwd %s/passwd 0644 0 0\nfile /etc/group %s/group 0644 0 0\n' "$out" "$out" >> "$manifest"

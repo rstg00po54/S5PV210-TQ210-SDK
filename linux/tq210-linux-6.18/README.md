@@ -242,3 +242,15 @@ The script requires the updated TQ210-TEST serial and one test board.
 It checks file sizes and Fastboot transfer success, but cannot verify the
 UART-selected address. No cp.b, no serial ownership, no NAND writes.
 Direct-address transfers and this host script need hardware validation.
+
+### USB userspace smoke test and BusyBox fix
+
+The ADB kernel booted and registered ec000000.usb in /sys/class/udc.
+DWC2 reported 16 endpoints and 7808 SPRAM entries; dummy USB regulators,
+unsupported besl and g_np_tx_fifo_size warnings remain to review.
+The first gadget setup attempt failed because the minimal BusyBox image
+had neither the shell test builtin nor the [ applet. Enable ASH_TEST,
+TEST, TEST1, the [ symlink, and shell arithmetic for the ADB setup loop.
+Also enable fancy prompt expansion. Only rebuild rootfs, not the kernel.
+Manual configfs ACM commands can bypass test on the running image.
+Actual USB enumeration remains pending.
