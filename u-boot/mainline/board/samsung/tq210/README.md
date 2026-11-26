@@ -18,9 +18,22 @@ From openboot, after cold reset into USB ROM mode:
     sudo ./build-host/tq210-dnw --dma-boot out/rom_usb_dma_fast.bin ../u-boot/mainline/build-tq210/u-boot.bin
 
 UART0: 115200 8N1. Capture complete serial output; USB GO ACK alone
-does not prove execution. Do not write storage. This port is unbuilt
-and untested at initial commit. The inherited S5P PWM timer's rate
-and CPU identification must be confirmed on hardware. No clock-tree
-or DDR reprogramming is intended. Data cache is compiled in but left off at startup for bring-up.
-Use tqinfo to inspect CP15 and PWM4. Test sleep against an external clock,
-then enable dcache manually and check scratch RAM before enabling it by default.
+does not prove execution. Do not write storage. No clock-tree or DDR
+reprogramming is intended. MMU and D-cache now enable after relocation;
+this default-on boot path needs a fresh hardware test.
+
+## Hardware validation (2026-11-26)
+
+On commit db99431 (manual cache enable):
+- U-Boot 2027.01-rc3 reached the UART0 shell, reported 1 GiB.
+- tqinfo reported PWM clock 66700000 Hz, timer4 1042187 Hz; the
+  counter advanced and sleep returned. Absolute timing accuracy was
+  not measured against an independent clock.
+- Before dcache on: SCTLR=00c5187a ACTLR=00000002 TTBR0=00000000.
+- After dcache on: SCTLR=00c5187f ACTLR=00000002 TTBR0=5fff0019.
+- 1 MiB scratch at 0x26000000 filled with 0x12345678 gave CRC32
+  a0564f88 both with D-cache on and after flush and disable.
+
+For the next build verify tqinfo immediately after boot, repeat the
+scratch CRC test, and time sleep against an external reference. These
+results do not validate all DDR, DMA cache coherency, or storage.

@@ -13,9 +13,8 @@
 #if !CONFIG_IS_ENABLED(SYS_DCACHE_OFF)
 void enable_caches(void)
 {
-	/* TQ210 bring-up: enable manually from the relocated Shell. */
-	if (!IS_ENABLED(CONFIG_TARGET_TQ210))
-		dcache_enable();
+	/* Enable MMU and D-cache after relocation. */
+	dcache_enable();
 }
 
 void disable_caches(void)
