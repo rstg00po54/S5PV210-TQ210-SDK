@@ -21,4 +21,6 @@ UART0: 115200 8N1. Capture complete serial output; USB GO ACK alone
 does not prove execution. Do not write storage. This port is unbuilt
 and untested at initial commit. The inherited S5P PWM timer's rate
 and CPU identification must be confirmed on hardware. No clock-tree
-or DDR reprogramming is intended. Data cache is disabled for bring-up.
+or DDR reprogramming is intended. Data cache is compiled in but left off at startup for bring-up.
+Use tqinfo to inspect CP15 and PWM4. Test sleep against an external clock,
+then enable dcache manually and check scratch RAM before enabling it by default.

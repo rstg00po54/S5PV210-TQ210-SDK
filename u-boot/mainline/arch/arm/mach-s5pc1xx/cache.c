@@ -13,7 +13,9 @@
 #if !CONFIG_IS_ENABLED(SYS_DCACHE_OFF)
 void enable_caches(void)
 {
-	dcache_enable();
+	/* TQ210 bring-up: enable manually from the relocated Shell. */
+	if (!IS_ENABLED(CONFIG_TARGET_TQ210))
+		dcache_enable();
 }
 
 void disable_caches(void)
@@ -23,25 +25,24 @@ void disable_caches(void)
 #endif
 
 #ifndef CONFIG_SYS_L2CACHE_OFF
+/* Cortex-A8 integrated L2: avoid the old stack-manipulating inline asm. */
 void v7_outer_cache_enable(void)
 {
-	__asm(
-		"push    {r0, r1, r2, lr}\n\t"
-		"mrc     15, 0, r3, cr1, cr0, 1\n\t"
-		"orr     r3, r3, #2\n\t"
-		"mcr     15, 0, r3, cr1, cr0, 1\n\t"
-		"pop     {r1, r2, r3, pc}"
-	);
+	unsigned int actlr;
+
+	asm volatile("mrc p15, 0, %0, c1, c0, 1" : "=r" (actlr));
+	actlr |= 2;
+	asm volatile("dsb sy\n\tmcr p15, 0, %0, c1, c0, 1\n\tisb"
+		     : : "r" (actlr) : "memory");
 }
 
 void v7_outer_cache_disable(void)
 {
-	__asm(
-		"push    {r0, r1, r2, lr}\n\t"
-		"mrc     15, 0, r3, cr1, cr0, 1\n\t"
-		"bic     r3, r3, #2\n\t"
-		"mcr     15, 0, r3, cr1, cr0, 1\n\t"
-		"pop     {r1, r2, r3, pc}"
-	);
+	unsigned int actlr;
+
+	asm volatile("mrc p15, 0, %0, c1, c0, 1" : "=r" (actlr));
+	actlr &= ~2U;
+	asm volatile("dsb sy\n\tmcr p15, 0, %0, c1, c0, 1\n\tisb"
+		     : : "r" (actlr) : "memory");
 }
 #endif
