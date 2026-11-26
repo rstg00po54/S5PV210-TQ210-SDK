@@ -887,7 +887,9 @@ No runtime kernel failure detection yet (a kernel that hangs
 after handoff will need manual recovery). No writes in U-Boot.
 Current FIT uses embedded data. No secure boot authentication.
 
-Update existing NAND rootfs scripts explicitly, not reinstall:
+Update existing NAND rootfs scripts OFFLINE, not reinstall.
+Boot the RAM rescue FIT (--ubi, not --nand-rootfs; interrupt NAND-first
+U-Boot and enter tqboot for USB fastboot), then on target UART:
     /sbin/tq210-usb adb
 Host, linux directory:
     adb push tq210-linux-6.18/tq210-nand-init /tmp/tq210-nand-init
@@ -895,10 +897,27 @@ Host, linux directory:
     adb push tq210-linux-6.18/update-nand-boot-scripts.sh /tmp/update-nand-boot-scripts.sh
 Target UART:
     sh /tmp/update-nand-boot-scripts.sh
-    /sbin/tq210-nand-sync
+The updater unmounts the inactive rootfs and detaches UBI on success.
 Rebuild U-Boot and USB-load only U-Boot, do not interrupt.
 Expected automatic NAND FIT boot and /boot mounted RW.
 To force USB recovery, interrupt autoboot and execute tqboot.
 Existing boot-fit.sh --ready can send a rescue FIT from that
 Fastboot session. No Linux kernel or FIT rebuild needed.
 No boot-reserved writes. Build/hardware validation pending.
+
+### PID 1 live replacement issue and offline updater fix
+
+2026-11-26: online update replaced the running init script inode.
+The old script stayed open as /proc/1/fd/10 -> /sbin/tq210-nand-init
+(deleted). Rootfs remount-ro returned EBUSY after boot/data
+unmount and ADB stop. Linux VFS refuses read-only remount with
+open unlinked inodes (s_remove_count). Existing new scripts
+were synced; do not repeat the online update or kill PID 1.
+If remount still fails, after sync and stopping writes a reboot
+will be an unclean rootfs shutdown; UBIFS journal recovery is
+expected but not guaranteed. Check boot and rootfs after reboot.
+Future script updates must run from the RAM rescue system;
+the updater now refuses active NAND rootfs, mounts inactive
+volume RO for identity check, then RW for changes, unmounts
+and detaches. Do not force unmount or format any volume.
+Offline path not yet hardware-tested.
