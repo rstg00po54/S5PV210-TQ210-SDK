@@ -314,3 +314,14 @@ failed as expected when the file was outside the current directory.
 Chinese text displayed garbled, likely source encoding mismatch;
 byte-for-byte comparison has not yet been reported. Small-file push
 and pull work; large transfers, integrity and reconnect remain pending.
+
+### Cross-compiled application execution verified
+
+Operator built a standalone C hello program with
+arm-linux-gnueabihf-gcc-10 -static -O2 hello.c -o hello.
+ADB pushed the 416268-byte executable to /tmp/hello, chmod +x succeeded,
+and adb shell /tmp/hello printed Hello TQ210 Linux 6.18!.
+This validates the basic cross-compile, transfer and execution workflow.
+The reported 571.4 MB/s for the small transfer exceeds USB 2.0 physical
+capacity and is not a valid throughput measurement. Sustained throughput,
+large-file integrity and reconnect behavior remain untested.
