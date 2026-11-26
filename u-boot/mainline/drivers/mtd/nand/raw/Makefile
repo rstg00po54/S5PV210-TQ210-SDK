@@ -54,6 +54,7 @@ obj-$(CONFIG_NAND_ARASAN) += arasan_nfc.o
 obj-$(CONFIG_NAND_BRCMNAND) += brcmnand/
 obj-$(CONFIG_NAND_CADENCE) += cadence_nand.o
 obj-$(CONFIG_NAND_DAVINCI) += davinci_nand.o
+obj-$(CONFIG_NAND_TQ210_RO) += tq210_nand_ro.o
 obj-$(CONFIG_NAND_DENALI) += denali.o
 obj-$(CONFIG_NAND_DENALI_DT) += denali_dt.o
 obj-$(CONFIG_NAND_FSL_ELBC) += fsl_elbc_nand.o

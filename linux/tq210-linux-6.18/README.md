@@ -750,3 +750,26 @@ Run from linux:
 Read-only host audit; prints candidate header words, branch
 targets and checksum windows. No programming and no assumptions
 that the raw factory binary contains any specific iROM header.
+
+### U-Boot read-only NAND port, phase 1
+
+TQ210 mainline U-Boot enables NAND and MTD commands, no UBI yet.
+Driver is read-only: MTD writeable flag cleared, erase/markbad
+callbacks deny, low-level command allowlist and data-output
+callbacks prohibit NAND program/erase/SET FEATURES. No on-flash
+BBT; direct first/second page bad-marker checks. Fixed environment
+partition defaults match Linux, both read-only. BCH8 decode
+ported from Linux, including raw comparison and erased fallback.
+No boot-reserved modification, no automatic NAND boot.
+
+Cleanly shut down NAND Linux first using /sbin/tq210-nand-sync.
+Rebuild U-Boot, use the existing OpenBoot USB DMA loader, interrupt
+autoboot via UART. Test nand info, nand bad, mtd list, and read
+first page of the UBI partition to RAM:
+    nand read 0x40000000 0x02000000 0x800
+    md.b 0x40000000 0x40
+Expected UBI EC header magic 55 42 49 23 if the first PEB has
+an EC header. Erased first PEB is not itself an error.
+Expected known physical bad blocks 0x1eae0000, 0x283c0000.
+Build and hardware validation pending. No UBI attach until
+MTD read compatibility is verified.

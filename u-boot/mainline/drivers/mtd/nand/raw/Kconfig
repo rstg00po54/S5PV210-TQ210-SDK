@@ -152,6 +152,13 @@ config NAND_BRCMNAND_IPROC
 	  Enable support for broadcom nand driver on the Broadcom
 	  iproc family such as Northstar (BCM5301x, BCM4708...)
 
+config NAND_TQ210_RO
+	bool "TQ210 S5PV210 read-only NAND with BCH8"
+	depends on TARGET_TQ210
+	select SYS_NAND_SELF_INIT
+	help
+	  Read-only S34ML08G1 NAND driver; program and erase are blocked.
+
 config NAND_DAVINCI
 	bool "Support TI Davinci NAND controller"
 	depends on ARCH_DAVINCI || ARCH_KEYSTONE
