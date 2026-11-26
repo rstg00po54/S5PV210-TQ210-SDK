@@ -975,3 +975,19 @@ Packer refuses payload >8176 bytes and overwrite. Existing
 linker also reserves stack/BSS within 16 KiB SRAM; check map
 and disassembly before any flash. Do not burn this probe yet.
 Confirm board OM strap selection and USB recovery method.
+
+### BL1 first-block isolated RAM rescue probe
+
+Host pack result verified: 1473-byte rom_sram payload, 8192-byte
+BL1 checksum 0x00023f39, entry EA00000A. New --bl1-probe DT
+exposes a 128 KiB first block bl1-probe, protects rest of
+boot-reserved and entire UBI area. No UBI attachment in this
+mode. nand-bl1-probe.c checks exact partition name/offset,
+geometry, BCH8 strength, image header/checksum, bad marker and
+all 64 pages blank including OOB. --check is read-only.
+--program-blank-bl1 only programs four pages using ECC and
+verifies raw/ECC readback; no erase or overwrite facility.
+Do not use program mode until OM boot straps and USB recovery
+are confirmed. USB ROM clocks assumed by rom_sram are not
+yet confirmed for NAND ROM. Silence is not definitive failure.
+Build and board testing pending.
