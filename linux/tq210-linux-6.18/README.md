@@ -722,3 +722,31 @@ attached until power cycle. Not a full init/shutdown system yet.
 Cold boot --nand-rootfs again, read /root/nand-probe.txt.
 Build, mount moves, switch_root and NAND root shutdown untested
 on hardware. Fastmap is experimental and may fall back to scanning.
+
+### NAND userspace cold boot and persistence PASS
+
+2026-11-26: installed rootfs volume 1 (256 MiB), detached,
+USB cold boot --nand-rootfs attached by Fastmap, switched root
+and ran PID 1 from UBIFS; /proc/mounts shows ubi0:rootfs / ubifs rw,
+ubi0:data /mnt/nand ubifs rw. Existing data probe intact.
+Wrote /root/nand-probe.txt, synced, tq210-nand-sync unmounted data
+and remounted root read-only. After power cycle, read NAND-ROOT-PASS
+from the root volume, both UBIFS mounts RW. Basic NAND userspace
+boot and clean shutdown persistence verified. USB still required
+to load the kernel and U-Boot.
+
+Next: NAND autonomous boot investigation. No boot-reserved write
+yet. Vendor U-Boot CONFIG_EVT1 and CONFIG_NAND_BL1_8BIT_ECC are
+enabled; cpu/s5pv210/start.S copy_from_nand compares the start
+of the SRAM image at 0xd0020000 with the copied U-Boot image,
+and nand_cp.c copies 0x80000 bytes from NAND in non-secure mode
+without ECC correction. The USB OpenBoot linker instead starts
+at 0xd0020010. Vendor source and Linux BCH8 layout are clues,
+not proof of iROM's actual NAND boot header, ECC, length or
+checksum rules. Need inspect original factory binary and board
+OM strap settings before making a NAND BL1 image.
+Run from linux:
+    python3 tq210-linux-6.18/audit-nand-boot.py
+Read-only host audit; prints candidate header words, branch
+targets and checksum windows. No programming and no assumptions
+that the raw factory binary contains any specific iROM header.
