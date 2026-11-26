@@ -773,3 +773,48 @@ an EC header. Erased first PEB is not itself an error.
 Expected known physical bad blocks 0x1eae0000, 0x283c0000.
 Build and hardware validation pending. No UBI attach until
 MTD read compatibility is verified.
+
+### U-Boot NAND probe and ECC read PASS; UBI/UBIFS phase 2
+
+2026-11-26 hardware: ID 01 d3 d1 95 58, 1024 MiB,
+2048+64 byte pages, 128 KiB eraseblock, BCH8/512, OOB available
+10 bytes, both expected bad blocks 0x1eae0000 and 0x283c0000.
+mtd list matches Linux partition offsets. nand read 0x40000000
+0x02000000 0x800 returned EC magic UBI# with version 1, EC 2,
+VID offset 2048 and data offset 4096. Next page all FF.
+This proves a normal programmed page is readable, not a
+deliberately injected bitflip correction test in U-Boot.
+
+Enable UBI, UBIFS commands and Fastmap with autoconvert disabled.
+Both partitions and the entire NAND remain read-only at MTD
+and bus layers. UBI build.c automatically selects ro_mode for
+write-protected MTD; fastmap writes are disallowed. On-flash
+Fastmap version 1 structures match Linux 6.18. U-Boot UBIFS
+supports w4/r0 and permits newer w5/r0 in read-only mode;
+actual interoperability still to be tested. Enable ZSTD
+decompression alongside existing LZO/GZIP support. Increase
+malloc area to 16 MiB and monitor reservation to 2 MiB.
+No changes to Linux or NAND data, no automatic NAND boot yet.
+
+Rebuild U-Boot and USB RAM load as before, stop autoboot:
+    ubi part ubi-data
+    ubi info
+    ubi info l
+    ubifsmount ubi0:rootfs
+    ubifsls /
+    ubifsls /root
+    ubifsload 0x40000000 /root/nand-probe.txt
+    md.b 0x40000000 f
+    ubifsumount
+    ubifsmount ubi0:data
+    ubifsls /
+    ubifsload 0x40000000 /probe.txt
+    md.b 0x40000000 1b
+    ubifsumount
+    ubi detach
+
+Expect NAND-ROOT-PASS and TQ210-UBIFS-PERSISTENCE-TEST,
+respectively, with trailing newline. Stop on attach/mount errors
+and collect logs, do not format or enable write access.
+Fastmap failure may fall back to full scan. Clean Linux shutdown
+required before testing. Build and hardware validation pending.
