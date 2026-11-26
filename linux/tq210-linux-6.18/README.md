@@ -210,3 +210,35 @@ Requires the previously built artifacts, corrected TQ210-TEST identity,
 one target board, and a separate UART adapter that remains connected
 during power cycles. No flash writes. Script has not been tested on
 hardware. If a stage fails, inspect the printed logs and reset if needed.
+
+
+## USB-only assisted boot (manual UART)
+
+For operators who keep their own UART terminal open, use the USB-only
+shell script instead of boot-linux.py. No pyserial or UART access.
+From linux/:
+
+    sh tq210-linux-6.18/boot-usb.sh all
+
+Power-cycle into iROM when prompted. The script downloads U-Boot and
+prints each exact UART Fastboot command. Enter it in the existing UART
+terminal, then press Enter in the Ubuntu script to transfer the image.
+After each transfer press Ctrl-C on UART. The final bootz command is
+printed, not executed. For an already-running U-Boot, run the individual
+dtb, rootfs and kernel actions; uboot is a separate cold-boot action.
+Use --basic before the action for the original kernel, default is ADB
+experimental kernel.
+
+    sh tq210-linux-6.18/boot-usb.sh uboot
+    sh tq210-linux-6.18/boot-usb.sh dtb
+    sh tq210-linux-6.18/boot-usb.sh rootfs
+    sh tq210-linux-6.18/boot-usb.sh kernel
+
+U-Boot cmd/fastboot.c and drivers/fastboot/fb_common.c implement -l and
+-s as hexadecimal buffer address and size. The host stage command does
+not carry an address. DTB: 2a000000 / 100000; ramdisk: 2c000000 /
+1000000; zImage: 26000000 / 4000000. The ranges do not overlap.
+The script requires the updated TQ210-TEST serial and one test board.
+It checks file sizes and Fastboot transfer success, but cannot verify the
+UART-selected address. No cp.b, no serial ownership, no NAND writes.
+Direct-address transfers and this host script need hardware validation.
