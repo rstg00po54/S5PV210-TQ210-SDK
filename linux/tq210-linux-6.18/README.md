@@ -463,3 +463,33 @@ then reads the same page in normal ECC mode and prints per-request
 errors, changed bytes and OOB. It accepts optional page numbers.
 No kernel or rootfs rebuild needed. No program/erase operations.
 The helper has not been cross-compiled or hardware-tested here.
+
+### Mixed factory OOB layouts: diagnostic revision
+
+Samples from the target: page 0,1,128 have FF bytes 0..11
+and 52 apparently programmed parity bytes 12..63, consistent
+with 4 x 13-byte BCH8 boot ECC (not yet proven).
+Pages 512,4096,8192,16384 have 4-byte SLC parity at 40..55,
+with 1,2,1,4 failed sectors respectively in the initial port.
+Blank samples pass. No changed data was reported by the probe.
+
+The next --ecc build performs CHECK ONLY, no data correction.
+For the first 64 SLC sectors it prints stored, calculated, XOR,
+syndrome, and self-comparison syndrome. For explicit diagnostic
+pages 0,1,128 it also runs the separate BCH register block at
+0xb0e20000 using the runtime/drivers/nand.c read-only sequence,
+reports completion/status/error-location registers and verifies
+the independently read data and parity bytes. BCH results do
+not override normal MTD ECC status. No inferred boundary, no
+automatic format selection, no writes. ECC strength in sysfs
+describes the experimental intended SLC format, not validated
+correction. --nand is unchanged. Compile and hardware test pending.
+
+    sh tq210-linux-6.18/build-nand-kernel.sh
+    sh tq210-linux-6.18/boot-fit.sh --ecc
+
+After enabling ADB and pushing the existing nand-ecc-probe tool:
+    adb shell /tmp/nand-ecc-probe
+    adb shell dmesg | grep -E 'SLC1|BCH8'
+
+Use host grep, not target grep, if BusyBox lacks -E.

@@ -32,6 +32,17 @@
 #define NF_ECC_MODE (3U << 23)
 #define NF_INITMECC BIT(5)
 #define NF_MECCLOCK BIT(7)
+#define BCH_CONF 0x00
+#define BCH_CONT 0x20
+#define BCH_STAT 0x30
+#define BCH_SECSTAT 0x40
+#define BCH_DECODE_DONE BIT(24)
+#define BCH_BUSY BIT(31)
+#define BCH_INIT BIT(2)
+#define BCH_ENCODE BIT(16)
+#define BCH_PARITY_OFFSET 12
+#define BCH_PARITY_BYTES 13
+#define TQ_DIAG_LIMIT 64
 #define TQ_ECC_STEP 512
 #define TQ_ECC_BYTES 4
 #define TQ_ECC_OFFSET 40
@@ -47,6 +58,17 @@ struct tq210_nand {
 	struct nand_chip chip;
 	void __iomem *base;
 	bool hw_ecc;
+	void __iomem *bch;
+	const u8 *bch_expected;
+	u32 bch_column;
+	u32 bch_status;
+	u32 bch_secstat;
+	u32 bch_erl[4];
+	u32 bch_erp[2];
+	bool bch_parity_match;
+	unsigned int diag_count;
+	u32 self_syndrome;
+	u32 expected;
 	const u8 *expected_ecc;
 	int ecc_result;
 	u32 calculated;
@@ -82,56 +104,93 @@ static const struct mtd_ooblayout_ops tq210_ooblayout = {
 	.free = tq210_oob_free,
 };
 
+static u32 tq210_slc_compare(struct tq210_nand *n, u32 parity)
+{
+	writel((parity & 0xff) | (((parity >> 8) & 0xff) << 16),
+	       n->base + NFMECCDATA0);
+	writel(((parity >> 16) & 0xff) | (((parity >> 24) & 0xff) << 16),
+	       n->base + NFMECCDATA1);
+	return readl(n->base + NFMECCERR0);
+}
+
 static int tq210_ecc_read_sector(struct tq210_nand *n, u8 *data)
 {
-	u8 stored[TQ_ECC_BYTES];
-	u32 byte, bit, expected;
+	const u8 *stored = n->expected_ecc;
 	unsigned int i;
-	int erased;
 
-	memcpy(stored, n->expected_ecc, sizeof(stored));
-	/* The controller accumulates ECC only during the 512 data bytes. */
 	writel(NF_ENABLE | NF_CE1 | NF_INITMECC, n->base + NFCONT);
 	for (i = 0; i < TQ_ECC_STEP; i++)
 		data[i] = readb(n->base + NFDATA);
 	writel(NF_ENABLE | NF_CE1 | NF_MECCLOCK, n->base + NFCONT);
 
 	n->calculated = readl(n->base + NFMECC0);
-	expected = (u32)stored[0] | ((u32)stored[1] << 8) |
-		   ((u32)stored[2] << 16) | ((u32)stored[3] << 24);
+	n->expected = (u32)stored[0] | ((u32)stored[1] << 8) |
+		      ((u32)stored[2] << 16) | ((u32)stored[3] << 24);
+	n->syndrome = tq210_slc_compare(n, n->expected);
 
-	/* These are ECC comparison registers, NOT the NAND data register. */
-	writel((u32)stored[0] | ((u32)stored[1] << 16),
-	       n->base + NFMECCDATA0);
-	writel((u32)stored[2] | ((u32)stored[3] << 16),
-	       n->base + NFMECCDATA1);
-	n->syndrome = readl(n->base + NFMECCERR0);
-
-	/* Erased sectors may have no programmed ECC. Check the actual data
-	 * and parity bit count, never assume an all-FF parity means blank.
+	/* Compare the accumulator with itself as a register-path test.
+	 * Do not modify RAM data based on unvalidated syndrome locations.
 	 */
-	if (expected == 0xffffffffU) {
-		erased = nand_check_erased_ecc_chunk(data, TQ_ECC_STEP,
-						   stored, TQ_ECC_BYTES,
-						   NULL, 0, 1);
-		if (erased >= 0)
-			return erased;
-	}
+	n->self_syndrome = tq210_slc_compare(n, n->calculated);
+	if (n->expected == 0xffffffffU &&
+	    !memchr_inv(data, 0xff, TQ_ECC_STEP))
+		return 0;
+	if (!(n->syndrome & 3) && n->calculated == n->expected)
+		return 0;
 
-	switch (n->syndrome & 3) {
-	case 0:
-		/* The initial port uses a conservative exact parity check too. */
-		return n->calculated == expected ? 0 : -EBADMSG;
-	case 1:
-		byte = (n->syndrome >> 7) & 0x7ff;
-		bit = (n->syndrome >> 4) & 7;
-		if (byte >= TQ_ECC_STEP || n->calculated == expected)
-			return -EBADMSG;
-		data[byte] ^= BIT(bit);
-		return 1;
-	default:
-		return -EBADMSG;
-	}
+	return -EBADMSG;
+}
+
+/* Diagnostic only: adapt the tested bare-metal BCH register sequence.
+ * Feed parity by NAND random READ, never by writing to NFDATA.
+ * Called with CE0 selected, after the normal page read command.
+ */
+static int tq210_bch_read_sector(struct tq210_nand *n, u8 *data)
+{
+	u32 saved_conf = readl(n->base + NFCONF);
+	u32 saved_bch_conf = readl(n->bch + BCH_CONF);
+	u32 saved_bch_cont = readl(n->bch + BCH_CONT) & ~BCH_INIT;
+	u8 parity[BCH_PARITY_BYTES];
+	unsigned int i;
+	int ret;
+
+	writel(NF_ENABLE | NF_CE1 | NF_MECCLOCK, n->base + NFCONT);
+	writel(saved_conf | NF_ECC_MODE, n->base + NFCONF);
+	writel((511U << 16) | 3U, n->bch + BCH_CONF);
+	writel(BCH_DECODE_DONE, n->bch + BCH_STAT);
+	writel(saved_bch_cont & ~BCH_ENCODE, n->bch + BCH_CONT);
+	writel(NF_ENABLE | NF_CE1 | NF_MECCLOCK | NF_INITMECC,
+	       n->base + NFCONT);
+	writel((saved_bch_cont & ~BCH_ENCODE) | BCH_INIT,
+	       n->bch + BCH_CONT);
+	writel(NF_ENABLE | NF_CE1, n->base + NFCONT);
+
+	for (i = 0; i < TQ_ECC_STEP; i++)
+		data[i] = readb(n->base + NFDATA);
+	writeb(NAND_CMD_RNDOUT, n->base + NFCMD);
+	writeb(n->bch_column & 0xff, n->base + NFADDR);
+	writeb(n->bch_column >> 8, n->base + NFADDR);
+	writeb(NAND_CMD_RNDOUTSTART, n->base + NFCMD);
+	udelay(2);
+	for (i = 0; i < BCH_PARITY_BYTES; i++)
+		parity[i] = readb(n->base + NFDATA);
+
+	writel(NF_ENABLE | NF_CE1 | NF_MECCLOCK, n->base + NFCONT);
+	ret = readl_poll_timeout(n->bch + BCH_STAT, n->bch_status,
+				 (n->bch_status & (BCH_BUSY | BCH_DECODE_DONE)) ==
+				 BCH_DECODE_DONE, 1, 100000);
+	n->bch_secstat = readl(n->bch + BCH_SECSTAT);
+	for (i = 0; i < ARRAY_SIZE(n->bch_erl); i++)
+		n->bch_erl[i] = readl(n->bch + 0xc0 + i * 4);
+	for (i = 0; i < ARRAY_SIZE(n->bch_erp); i++)
+		n->bch_erp[i] = readl(n->bch + 0xf0 + i * 4);
+	n->bch_parity_match = !memcmp(parity, n->bch_expected, sizeof(parity));
+
+	writel(saved_bch_conf, n->bch + BCH_CONF);
+	writel(saved_bch_cont, n->bch + BCH_CONT);
+	writel(BCH_DECODE_DONE, n->bch + BCH_STAT);
+	writel(saved_conf, n->base + NFCONF);
+	return ret;
 }
 
 static bool tq210_read_command(u8 cmd)
@@ -202,6 +261,15 @@ static int tq210_exec_op(struct nand_chip *chip,
 				writeb(in->ctx.addr.addrs[j], n->base + NFADDR);
 			break;
 		case NAND_OP_DATA_IN_INSTR:
+			if (n->bch_expected) {
+				if (in->ctx.data.len != TQ_ECC_STEP) {
+					ret = -EINVAL;
+					break;
+				}
+				ret = tq210_bch_read_sector(n,
+							    in->ctx.data.buf.in);
+				break;
+			}
 			if (n->expected_ecc) {
 				if (in->ctx.data.len != TQ_ECC_STEP) {
 					ret = -EINVAL;
@@ -238,6 +306,38 @@ static int tq210_exec_op(struct nand_chip *chip,
 }
 
 
+static void tq210_probe_boot_bch(struct nand_chip *chip, const u8 *raw,
+				 int page)
+{
+	struct tq210_nand *n = nand_get_controller_data(chip);
+	struct device *dev = nand_to_mtd(chip)->dev.parent;
+	u8 data[TQ_ECC_STEP];
+	unsigned int step;
+	int ret;
+
+	/* Explicit diagnostic samples only, no guessed partition boundary. */
+	if (!n->bch || (page != 0 && page != 1 && page != 128))
+		return;
+
+	for (step = 0; step < TQ_ECC_STEPS; step++) {
+		n->bch_column = 2048 + BCH_PARITY_OFFSET +
+				step * BCH_PARITY_BYTES;
+		n->bch_expected = chip->oob_poi + BCH_PARITY_OFFSET +
+				  step * BCH_PARITY_BYTES;
+		n->bch_parity_match = false;
+		ret = nand_read_page_op(chip, page, step * TQ_ECC_STEP,
+					data, sizeof(data));
+		n->bch_expected = NULL;
+		dev_info(dev,
+			 "BCH8 probe page=%d step=%u ret=%d stat=%08x sec=%08x data_match=%u parity_match=%u ERL=%08x,%08x,%08x,%08x ERP=%08x,%08x\n",
+			 page, step, ret, n->bch_status, n->bch_secstat,
+			 !ret && !memcmp(data, raw + step * TQ_ECC_STEP,
+					 sizeof(data)), n->bch_parity_match,
+			 n->bch_erl[0], n->bch_erl[1], n->bch_erl[2],
+			 n->bch_erl[3], n->bch_erp[0], n->bch_erp[1]);
+	}
+}
+
 static int tq210_read_page_ecc(struct nand_chip *chip, u8 *buf,
 			       int oob_required, int page)
 {
@@ -263,16 +363,22 @@ static int tq210_read_page_ecc(struct nand_chip *chip, u8 *buf,
 		if (ret)
 			return ret;
 		stat = n->ecc_result;
-		if (stat < 0) {
+		if (n->diag_count < TQ_DIAG_LIMIT) {
+			n->diag_count++;
+			dev_info(mtd->dev.parent,
+				 "SLC1 page=%d step=%u stored=%08x calc=%08x xor=%08x syndrome=%08x self=%08x result=%d\n",
+				 page, step, n->expected, n->calculated,
+				 n->expected ^ n->calculated, n->syndrome,
+				 n->self_syndrome, stat);
+		}
+		if (stat < 0)
 			mtd->ecc_stats.failed++;
-			dev_warn_ratelimited(mtd->dev.parent,
-				"ECC mismatch page=%d sector=%u calculated=%08x syndrome=%08x\n",
-				page, step, n->calculated, n->syndrome);
-		} else {
+		else {
 			mtd->ecc_stats.corrected += stat;
 			max_bitflips = max_t(unsigned int, max_bitflips, stat);
 		}
 	}
+	tq210_probe_boot_bch(chip, buf, page);
 	return max_bitflips;
 }
 
@@ -340,6 +446,11 @@ static int tq210_nand_probe(struct platform_device *pdev)
 
 	n->hw_ecc = of_property_read_bool(dev->of_node,
 					 "embedsky,experimental-slc-ecc");
+	if (n->hw_ecc && platform_get_resource(pdev, IORESOURCE_MEM, 1)) {
+		n->bch = devm_platform_ioremap_resource(pdev, 1);
+		if (IS_ERR(n->bch))
+			return PTR_ERR(n->bch);
+	}
 	writel(NF_ENABLE | NF_CE0 | NF_CE1 |
 	       (n->hw_ecc ? NF_MECCLOCK : 0), n->base + NFCONT);
 	writel(n->hw_ecc ? NF_TIMING & ~NF_ECC_MODE : NF_TIMING,
@@ -375,7 +486,7 @@ static int tq210_nand_probe(struct platform_device *pdev)
 	}
 	platform_set_drvdata(pdev, n);
 	dev_warn(dev, "1 GiB NAND registered READ ONLY; %s\n",
-		 n->hw_ecc ? "experimental 1-bit/512B ECC, OOB 40..55" :
+		 n->hw_ecc ? "experimental 1-bit/512B ECC CHECK ONLY, OOB 40..55" :
 			     "ECC correction disabled");
 	return 0;
 }

@@ -2,5 +2,6 @@
 #include "s5pv210-tq210-nand.dts"
 
 &{/soc/nand-controller@b0e00000} {
+	reg = <0xb0e00000 0x1000>, <0xb0e20000 0x1000>;
 	embedsky,experimental-slc-ecc;
 };
