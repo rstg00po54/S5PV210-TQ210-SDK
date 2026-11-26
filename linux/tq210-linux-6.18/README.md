@@ -547,3 +547,14 @@ Compile and board test pending for this variant.
 
 Check /proc/mtd, flags, ecc_strength, ecc_step_size, bad_blocks.
 Do not erase the whole device until the standard MTD test passes.
+
+User-space standard MTD test (not automatic on boot):
+    arm-linux-gnueabihf-gcc-10 -static -O2 -Wall tq210-linux-6.18/nand-mtd-rwtest.c -o /tmp/nand-mtd-rwtest
+    adb push /tmp/nand-mtd-rwtest /tmp/
+    adb shell chmod +x /tmp/nand-mtd-rwtest
+    adb shell /tmp/nand-mtd-rwtest --block-8159
+Checks exact geometry, writable flags, good block, two full raw blank
+passes before erase; writes only pages 0,1 within block 8159, then
+verifies normal ECC read and MEMREAD corrected statistics. Final erase
+only after success. No automatic cleanup on failure. Tool requires
+the --bch-rw kernel; compile/hardware validation pending.
