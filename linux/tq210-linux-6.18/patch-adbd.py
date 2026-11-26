@@ -33,4 +33,17 @@ old = '    h->bulk_out = -1;\n    h->bulk_out = -1;'
 if old not in s:
     raise SystemExit("Unexpected USB source revision")
 s = s.replace(old, '    h->bulk_out = -1;\n    h->bulk_in = -1;')
+
+
+# glibc htole16/32 may expand to inline functions, which cannot initialize
+# static descriptors. This port targets little-endian ARM only.
+old = '#define cpu_to_le16(x)  htole16(x)\n#define cpu_to_le32(x)  htole32(x)'
+new = '''#if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+#error "TQ210 adbd requires a little-endian target"
+#endif
+#define cpu_to_le16(x) ((__le16)(x))
+#define cpu_to_le32(x) ((__le32)(x))'''
+if old not in s:
+    raise SystemExit("Unexpected endian macro definitions")
+s = s.replace(old, new)
 p.write_text(s)
