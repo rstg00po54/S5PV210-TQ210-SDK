@@ -634,3 +634,46 @@ After power-cycle and USB boot --ubi, upload the helper again,
 attach (do NOT recreate), mount and verify probe.txt. Always unmount
 and detach before power-cycle. UBI/UBIFS build and hardware validation
 pending. Existing RAM rootfs retained.
+
+### UBIFS persistence PASS; optional UBI Fastmap
+
+2026-11-26: first attach of mtd1 succeeded, 7934 good PEBs,
+2 bad, 0 corrupted. Created data dynamic volume; mounted UBIFS,
+wrote probe.txt, sync, unmount and detach all succeeded.
+After power cycle and USB RAM boot, reattach found the existing
+volume (same image sequence and UBIFS UUID) and read the exact
+TQ210-UBIFS-PERSISTENCE-TEST string. Persistence verified.
+
+Full attach is slow because UBI scans 7936 PEBs and the current
+BCH8 PIO path has multiple reads per page. Enable CONFIG_MTD_UBI_FASTMAP
+in the NAND kernel but keep automatic conversion opt-in; no new
+boot-time writes. Linux 6.18 drivers/mtd/ubi/build.c exposes
+fm_autoconvert as a writable module parameter and writes fastmap
+on clean detach. attach.c falls back to full scanning if no valid
+fastmap is found. No change to partitions, BCH8 or userspace ABI.
+
+Unmount /mnt/nand, detach ubi0 with the current utility, rebuild
+the NAND kernel and USB boot --ubi. Reuse the existing tq210-ubi
+binary, enable ADB and push it as usual. On target, BEFORE attach:
+    echo Y > /sys/module/ubi/parameters/fm_autoconvert
+    cat /sys/module/ubi/parameters/fm_autoconvert
+    cat /proc/uptime
+    /tmp/tq210-ubi attach
+    cat /proc/uptime
+    mkdir -p /mnt/nand
+    mount -t ubifs ubi0:data /mnt/nand
+    cat /mnt/nand/probe.txt
+    sync
+    umount /mnt/nand
+    /tmp/tq210-ubi detach
+
+First attach with fastmap conversion may still need a full scan.
+After detach, attach again, compare uptime before/after and look
+for "attached by fastmap" in dmesg. Mount and check probe.txt
+again; then repeat after cold boot. No erase, create-data or
+format needed. Fastmap is experimental, performance and recovery
+not yet tested on this board. If fastmap is invalid UBI can
+fall back to a full scan. To explicitly recover using the old
+full-scan kernel, retain the previous build or rebuild without
+CONFIG_MTD_UBI_FASTMAP. Merely setting fm_autoconvert=N does not
+necessarily suppress reading an existing fastmap.
