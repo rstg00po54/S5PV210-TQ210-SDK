@@ -1,6 +1,6 @@
 #include "openboot/platform.h"
 
-#if !defined(SRAM_ONLY) && !defined(USB_HANDOFF_TEST)
+#if !defined(SRAM_ONLY) && !defined(USB_HANDOFF_TEST) && !defined(NAND_BOOT)
 static void diagnostic_console(void)
 {
 #ifdef USB_ENUM_TEST
@@ -103,7 +103,9 @@ void boot_main(void)
 
     console_write("[5] DDR EXEC PASS; back in SRAM\r\n");
 
-#ifdef USB_HANDOFF_TEST
+#ifdef NAND_BOOT
+    nand_boot();
+#elif defined(USB_HANDOFF_TEST)
     handoff_test();
 #else
     console_write("OpenBoot diagnostic complete. a=optional DMC0 alias probe, b=DMC1, m=dual-window map test.\r\n");

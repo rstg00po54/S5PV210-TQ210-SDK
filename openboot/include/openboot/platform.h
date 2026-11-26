@@ -59,4 +59,6 @@ void usb_settle(void);
 void handoff_guard(void);
 __attribute__((noreturn)) void handoff_test(void);
 
+void nand_boot(void);
+
 #endif

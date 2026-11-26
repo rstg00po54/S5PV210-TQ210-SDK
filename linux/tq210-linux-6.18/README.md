@@ -991,3 +991,28 @@ Do not use program mode until OM boot straps and USB recovery
 are confirmed. USB ROM clocks assumed by rom_sram are not
 yet confirmed for NAND ROM. Silence is not definitive failure.
 Build and board testing pending.
+
+### Real NAND iROM BL1 boot PASS; SRAM BCH8 reader and BL2 plan
+
+2026-11-26: first block blank check and four-page ECC program
+and readback passed. Cold NAND boot with USB removed produced
+SRAM C ENTRY OK, all six ROM clock values matched USB and
+SRAM TEST PASS. Original 8 KiB format and BCH8 OOB layout
+verified on this board. User can select USB/NAND boot mode.
+
+New rom_nand_read variant initializes both DDR banks and reads
+the existing BL1 through BCH8, verifies its original byte sum.
+Run this headerless variant via iROM USB, not flash. New
+rom_nand_boot additionally reads a proposed BL2 slot starting
+at 0x00100000, header page followed by U-Boot payload up to
+1 MiB, CRC32 for header and payload, fixed load 0x24000000.
+Rejects bad blocks rather than skipping (fixed slot layout).
+No write commands or erase. No slot writer or BL1 replacement
+in this commit; existing proven BL1 remains intact.
+Build openboot and check both variants fit <=8176 bytes.
+USB test:
+    sudo ./build-host/tq210-dnw out/rom_nand_read.bin --pad-vendor-size
+Expected DDR EXEC PASS, NAND ID PASS, BL1 checksum 00023f39,
+NAND BL1 BCH8 READ PASS, NAND READ TEST PASS.
+If size exceeds BL1 budget, optimize before packing.
+Compiler and hardware validation pending.

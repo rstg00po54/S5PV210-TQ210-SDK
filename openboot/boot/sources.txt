@@ -8,3 +8,4 @@ diagnostics/usb_probe.c
 drivers/usb/usb_enum.c
 drivers/usb/usb_handoff.c
 protocol/obl2.c
+drivers/nand/nand_boot.c
