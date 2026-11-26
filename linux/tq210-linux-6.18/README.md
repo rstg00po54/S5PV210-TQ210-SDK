@@ -188,3 +188,25 @@ No daemon starts automatically. Root shell over USB is intended only
 for a trusted isolated test cable; no TCP listener should be enabled.
 1209:0001 is a non-unique private-test VID/PID, not for distribution.
 Both USB kernel and userspace integration are untested on hardware.
+
+
+## One-command RAM boot
+
+Close the UART terminal first (only one program may own the UART).
+On Ubuntu, from linux/:
+
+    sudo apt install python3-serial
+    ls /dev/ttyUSB* /dev/ttyACM*
+    sudo /usr/bin/python3 tq210-linux-6.18/boot-linux.py /dev/ttyUSB0
+
+Replace ttyUSB0 with the actual UART0 adapter. Power-cycle into iROM USB
+download mode when prompted. The script checks image headers and sizes,
+loads OpenBoot and the new-identity U-Boot, stages DTB/ramdisk/kernel
+through Fastboot, checks CRC32 on the board, runs bootz, and releases UART
+after the userspace banner. Reopen your normal serial terminal afterward.
+Use --basic for the original non-USB kernel or --uboot-ready if the board
+is already at the TQ210 U-Boot prompt (do not use while Linux is running).
+Requires the previously built artifacts, corrected TQ210-TEST identity,
+one target board, and a separate UART adapter that remains connected
+during power cycles. No flash writes. Script has not been tested on
+hardware. If a stage fails, inspect the printed logs and reset if needed.
