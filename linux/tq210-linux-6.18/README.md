@@ -590,3 +590,47 @@ No automatic UBI attach or partitioning is enabled. After the erase
 passes, rebuild and test UBI on a separate data partition, keeping
 space for NAND boot. Existing RAM system can perform erase without
 rebuilding.
+
+### Full-chip good-block erase PASS; partitioned UBI RAM boot
+
+2026-11-26: NAND ERASE ALL GOOD PASS: erased=8190 preserved_bad=2.
+All 8190 good blocks verified raw FF (main and OOB). No backup,
+as explicitly requested. Kernel-reported bad-block map unchanged.
+
+New --ubi DT uses the validated BCH8 MTD controller and fixed
+partitions: boot-reserved 0x00000000..0x01ffffff (32 MiB,
+read-only in this DT), ubi-data 0x02000000..0x3fffffff (992 MiB).
+Boot allocation is provisional pending iROM/U-Boot NAND boot design.
+The --bch-rw variant still exposes the whole device; do not run
+the full-chip eraser again once UBI data exists.
+
+    sh tq210-linux-6.18/build-nand-kernel.sh
+    sh tq210-linux-6.18/boot-fit.sh --ubi
+
+On target verify /proc/mtd and /proc/filesystems, enable ADB.
+On host:
+    arm-linux-gnueabihf-gcc-10 -static -O2 -Wall tq210-linux-6.18/tq210-ubi.c -o /tmp/tq210-ubi
+    adb push /tmp/tq210-ubi /tmp/
+    adb shell chmod +x /tmp/tq210-ubi
+
+On target:
+    /tmp/tq210-ubi attach
+    /tmp/tq210-ubi create-data
+    mkdir -p /mnt/nand
+    mount -t ubifs ubi0:data /mnt/nand
+    echo TQ210-UBIFS-PERSISTENCE-TEST > /mnt/nand/probe.txt
+    sync
+    cat /mnt/nand/probe.txt
+    df -h /mnt/nand
+    umount /mnt/nand
+    /tmp/tq210-ubi detach
+
+Attach explicitly initializes UBI metadata if the partition is blank.
+The helper makes a 128 MiB requested dynamic volume named data,
+leaving remaining UBI capacity unallocated for future volumes.
+Linux UBIFS formats an empty dynamic volume on first writable mount.
+No attach, format or erase occurs automatically at kernel boot.
+After power-cycle and USB boot --ubi, upload the helper again,
+attach (do NOT recreate), mount and verify probe.txt. Always unmount
+and detach before power-cycle. UBI/UBIFS build and hardware validation
+pending. Existing RAM rootfs retained.

@@ -66,3 +66,5 @@ dtb-$(CONFIG_ARCH_S5PV210) += s5pv210-tq210-nand-ecc.dtb
 dtb-$(CONFIG_ARCH_S5PV210) += s5pv210-tq210-nand-rwtest.dtb
 
 dtb-$(CONFIG_ARCH_S5PV210) += s5pv210-tq210-nand-bch.dtb
+
+dtb-$(CONFIG_ARCH_S5PV210) += s5pv210-tq210-nand-ubi.dtb

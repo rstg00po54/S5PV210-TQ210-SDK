@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: GPL-2.0
+#include "s5pv210-tq210-nand-bch.dts"
+
+&{/soc/nand-controller@b0e00000} {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		partition@0 {
+			label = "boot-reserved";
+			reg = <0x00000000 0x02000000>;
+			read-only;
+		};
+
+		partition@2000000 {
+			label = "ubi-data";
+			reg = <0x02000000 0x3e000000>;
+		};
+	};
+};
