@@ -293,3 +293,14 @@ For a basic file transfer test use a small file, push/pull and compare
 on the host. No claim of modern-client compatibility until tested.
 If endpoints do not appear, inspect adbd.log and dmesg. This source
 port has not yet been cross-compiled or run on hardware.
+
+### First ADB hardware validation (2026-11-26)
+
+After the constant little-endian initializer fix in 7c79ad2, the operator
+reported a successful ARM adbd/rootfs build and boot. Ubuntu unprivileged
+adb devices listed TQ210-TEST as device. adb shell entered interactive
+BusyBox ash with root@tq210:~#; pwd returned /root. FunctionFS ep0, ep1,
+ep2 were present; ps listed /usr/bin/adbd (PID 62); adbd.log was empty.
+This validates USB ADB enumeration, connection and interactive shell.
+File sync, binary integrity, reconnect and sustained throughput are still
+pending. The daemon remains a legacy unauthenticated USB-only lab tool.
