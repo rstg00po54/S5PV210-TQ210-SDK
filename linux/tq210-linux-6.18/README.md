@@ -395,3 +395,15 @@ MTD registered mtd0: 40000000 00020000 "tq210-nand-raw-ro", with
 this diagnostic configuration. Probe and geometry passed; repeated
 page reads, end-of-device samples, data integrity and ECC correction
 remain to be validated. No write or erase testing authorized.
+
+### NAND raw read samples
+
+Operator read page 0 successfully via /dev/mtd0ro. The hexdump includes
+little-endian ARM instructions (ea000013, e59ff014) and 12345678 at
+offset 0x4c, consistent with existing bootloader contents (not yet
+compared against a factory image). Four-page reads at pages 0,
+262144 and 524284 all completed, exercising the start, second LUN
+boundary and end of the address range. This is sampled access, not
+a full-device integrity or anti-alias test. No ECC correction yet.
+The throughput command could not run because BusyBox has no time
+applet; use /proc/uptime before and after dd instead. No NAND writes.
