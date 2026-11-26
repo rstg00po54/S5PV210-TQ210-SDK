@@ -440,3 +440,26 @@ an incompatible OOB layout, not necessarily damaged NAND. Use --nand
 for raw comparison, not ECC data for a forensic backup. Real hardware
 single-bit correction, ECC status semantics and factory layout require
 validation. Do not enable writes or mount a filesystem yet.
+
+### ECC first hardware result and raw OOB diagnostics
+
+The ECC DT booted, strength=1, step=512, flags=0x0. Page 0
+reported four failed sectors and zero corrected bits; calculated
+values fa565565 ff3303ff fa65aa66 faaaa565, syndromes
+008d1a26 0199fc66 028f116a 00add3f6. The visible raw page header
+matched the prior raw read. This does NOT establish a damaged chip
+or a compatible ECC layout. The legacy character read() path may
+return data even on ECC errors. Use MEMREAD for per-request status.
+
+From linux/ on the host:
+    arm-linux-gnueabihf-gcc-10 -static -O2 -Wall tq210-linux-6.18/nand-ecc-probe.c -o /tmp/nand-ecc-probe
+    adb push /tmp/nand-ecc-probe /tmp/
+    adb shell chmod +x /tmp/nand-ecc-probe
+    adb shell /tmp/nand-ecc-probe
+
+Run /sbin/tq210-usb adb on the target first if ADB is not active.
+The tool opens only /dev/mtd0ro, reads main+OOB with MTD_OPS_RAW,
+then reads the same page in normal ECC mode and prints per-request
+errors, changed bytes and OOB. It accepts optional page numbers.
+No kernel or rootfs rebuild needed. No program/erase operations.
+The helper has not been cross-compiled or hardware-tested here.
