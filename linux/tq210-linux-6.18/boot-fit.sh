@@ -137,7 +137,8 @@ root_run() {
 }
 if [ "$(id -u)" -ne 0 ]; then sudo -v; fi
 if [ "$ready" = no ]; then
-    echo "Power-cycle into Samsung iROM USB mode; no UART commands needed."
+    echo "Power-cycle into Samsung iROM USB mode."
+    echo "For NAND-first U-Boot, interrupt autoboot on UART and enter tqboot for USB rescue."
     i=0
     while :; do
         n=$(lsusb -d 04e8:1234 | wc -l)
@@ -149,7 +150,7 @@ if [ "$ready" = no ]; then
     done
     (cd "$openboot"; root_run timeout 120 "$dnw" --dma-boot "$loader" "$uboot")
 fi
-echo "Waiting for TQ210 automatic Fastboot..."
+echo "Waiting for TQ210 Fastboot (if NAND-first autoboot is enabled, interrupt and enter tqboot)..."
 i=0
 while :; do
     n=$(root_run timeout 5 fastboot devices 2>/dev/null | awk '$1=="TQ210-TEST" && $2=="fastboot" {n++} END {print n+0}')

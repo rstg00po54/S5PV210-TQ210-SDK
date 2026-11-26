@@ -4,6 +4,8 @@ set -eu
 [ -f /etc/tq210-rootfs-ready ] || { echo "Not NAND rootfs"; exit 1; }
 cd /
 /sbin/tq210-usb stop
+sync
+if grep -q ' /boot ' /proc/mounts; then umount /boot; fi
 if grep -q ' /mnt/nand ' /proc/mounts; then umount /mnt/nand; fi
 sync
 mount -o remount,ro /

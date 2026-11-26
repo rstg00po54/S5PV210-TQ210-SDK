@@ -9,6 +9,20 @@ mount -t tmpfs tmpfs /run || echo "run tmpfs mount failed"
 if [ "$(cat /sys/class/ubi/ubi0_0/name 2>/dev/null)" = data ]; then
     mount -t ubifs ubi0:data /mnt/nand || echo "data mount failed (rootfs remains available)"
 fi
+# Probe existing boot volume read-only first: never autoformat an empty one.
+if [ "$(cat /sys/class/ubi/ubi0_2/name 2>/dev/null)" = boot ]; then
+    if mkdir -p /boot && [ -z "$(ls -A /boot)" ] &&
+       mount -t ubifs -o ro ubi0:boot /boot; then
+        if [ -s /boot/tq210.itb ] || [ -s /boot/tq210-backup.itb ]; then
+            mount -o remount,rw /boot || echo "boot volume remains read-only"
+        else
+            umount /boot
+            echo "boot volume has no FIT; left unmounted"
+        fi
+    else
+        echo "boot mount failed (rootfs remains available)"
+    fi
+fi
 cd /root
 echo
 echo "========================================"

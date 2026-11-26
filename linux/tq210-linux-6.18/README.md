@@ -867,3 +867,38 @@ No auto boot yet, no boot-reserved writes. /boot is manually
 mounted for this test, unmount before old shutdown helper.
 Installer refuses nonempty volume and does not overwrite.
 Host build and board test pending.
+
+### NAND FIT manual boot PASS; NAND-first automatic boot
+
+2026-11-26 hardware: created boot volume ID 2, UBIFS w5/r0.
+U-Boot attached via Fastmap, 3 user volumes, 7934 good/2 bad/0
+corrupt PEBs; loaded /tq210.itb (4572904 bytes) from boot UBIFS.
+Unmounted and detached, bootm verified all three SHA256 hashes,
+Linux 6.18 started, attached Fastmap and switched to existing
+NAND rootfs. Manual NAND FIT boot is verified. OpenBoot and
+U-Boot still loaded via USB.
+
+New default boot command: tqnandboot; tqboot. tqnandboot checks
+FIT file size (32 MiB limit), reads the full file, checks FDT
+header and iminfo hashes, tries optional /tq210-backup.itb on
+primary read/verification failure, then unmounts/detaches and
+boots. If command returns, default falls through to USB rescue.
+No runtime kernel failure detection yet (a kernel that hangs
+after handoff will need manual recovery). No writes in U-Boot.
+Current FIT uses embedded data. No secure boot authentication.
+
+Update existing NAND rootfs scripts explicitly, not reinstall:
+    /sbin/tq210-usb adb
+Host, linux directory:
+    adb push tq210-linux-6.18/tq210-nand-init /tmp/tq210-nand-init
+    adb push tq210-linux-6.18/tq210-nand-sync /tmp/tq210-nand-sync
+    adb push tq210-linux-6.18/update-nand-boot-scripts.sh /tmp/update-nand-boot-scripts.sh
+Target UART:
+    sh /tmp/update-nand-boot-scripts.sh
+    /sbin/tq210-nand-sync
+Rebuild U-Boot and USB-load only U-Boot, do not interrupt.
+Expected automatic NAND FIT boot and /boot mounted RW.
+To force USB recovery, interrupt autoboot and execute tqboot.
+Existing boot-fit.sh --ready can send a rescue FIT from that
+Fastboot session. No Linux kernel or FIT rebuild needed.
+No boot-reserved writes. Build/hardware validation pending.

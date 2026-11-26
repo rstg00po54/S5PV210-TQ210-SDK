@@ -302,3 +302,8 @@ $(obj)/license_data_size.h: $(srctree)/Licenses/gpl-2.0.txt FORCE
 	$(call filechk,data_size)
 
 CFLAGS_ethsw.o := -Wno-enum-conversion
+
+# TQ210 NAND boot policy (board defconfig enables UBI/UBIFS).
+ifeq ($(CONFIG_TARGET_TQ210),y)
+obj-$(CONFIG_CMD_UBIFS) += tqnandboot.o
+endif
