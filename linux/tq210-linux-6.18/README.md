@@ -418,3 +418,25 @@ in and out. /proc/uptime before/after: 306.80/318.09 seconds;
 11.29 s elapsed, approximately 1.42 MiB/s including operator and
 command overhead, not an isolated throughput measurement. No ECC
 correction or full-device data integrity validation yet. No NAND writes.
+
+### Experimental SLC hardware ECC, opt-in only
+
+The vendor 3.0.8 s3c_nand.c and plat-s5p/include/plat/regs-nand.h
+implement 1-bit/512-byte SLC data ECC, 4 parity bytes per step,
+OOB offsets 40..55, free OOB 2..39, spare parity at 60..63.
+Actual factory-programmed NAND may use a different layout, especially
+bootloader pages. The new experimental path implements only main-data
+ECC; spare-area correction is NOT implemented. No NAND programming,
+erase or data-out operation is enabled. The raw diagnostic DT remains
+the default for --nand.
+
+    sh tq210-linux-6.18/build-nand-kernel.sh
+    sh tq210-linux-6.18/boot-fit.sh --ecc
+
+Check /proc/mtd and sysfs ecc_strength=1, ecc_step_size=512, flags=0x0.
+Read small samples and check corrected_bits and ecc_failures before
+and after. An EBADMSG/read failure or increasing failures may indicate
+an incompatible OOB layout, not necessarily damaged NAND. Use --nand
+for raw comparison, not ECC data for a forensic backup. Real hardware
+single-bit correction, ECC status semantics and factory layout require
+validation. Do not enable writes or mount a filesystem yet.

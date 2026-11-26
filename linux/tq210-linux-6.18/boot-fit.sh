@@ -12,13 +12,17 @@ for arg in "$@"; do
     case "$arg" in
         --basic) variant=basic ;;
         --nand) variant=nand ;;
+        --ecc) variant=ecc ;;
         --ready) ready=yes ;;
-        *) echo "Usage: $0 [--basic|--nand] [--ready]" >&2; exit 2 ;;
+        *) echo "Usage: $0 [--basic|--nand|--ecc] [--ready]" >&2; exit 2 ;;
     esac
 done
 if [ "$variant" = basic ]; then
     boot="$linux/build-tq210-6.18/arch/arm/boot"
     dtb="$boot/dts/samsung/s5pv210-tq210.dtb"
+elif [ "$variant" = ecc ]; then
+    boot="$linux/build-tq210-nand/arch/arm/boot"
+    dtb="$boot/dts/samsung/s5pv210-tq210-nand-ecc.dtb"
 elif [ "$variant" = nand ]; then
     boot="$linux/build-tq210-nand/arch/arm/boot"
     dtb="$boot/dts/samsung/s5pv210-tq210-nand.dtb"
