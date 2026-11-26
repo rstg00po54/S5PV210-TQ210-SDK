@@ -383,3 +383,15 @@ Check on UART:
 
 The regular ADB kernel and old boot commands are unaffected.
 This new driver has not been compiled or tested on the board yet.
+
+### First Linux NAND probe validation (2026-11-26)
+
+Operator booted Linux 6.18.0-tq210-nand, built with GCC 10.5.0.
+NFCONF=01807772 NFCONT=00800007 NFSTAT=f0800b0d; clock=133400000 Hz.
+NAND core identified manufacturer 01, device d3, AMD/Spansion S34ML08G1,
+1024 MiB SLC, 128 KiB erase blocks, 2048-byte pages and 64-byte OOB.
+MTD registered mtd0: 40000000 00020000 "tq210-nand-raw-ro", with
+/dev/mtd0ro and /dev/mtd0 present. ECC NONE warnings are expected for
+this diagnostic configuration. Probe and geometry passed; repeated
+page reads, end-of-device samples, data integrity and ECC correction
+remain to be validated. No write or erase testing authorized.
