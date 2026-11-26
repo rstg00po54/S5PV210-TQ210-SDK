@@ -348,3 +348,11 @@ the board validates the FDT header and exact transfer length before
 bootm after USB teardown. SHA256 hashes detect corruption, not
 authenticate the image. adbd remains manually activated, as before.
 This path has not yet been compiled or hardware-tested.
+
+### Unified FIT boot hardware validation
+
+Operator confirmed the new boot-fit.sh automatic USB RAM boot works on
+TQ210 CoreB. No UART download commands are required. The original manual
+boot path remains available. Maximum 256 MiB transfer, sustained transfer
+speed, interrupted download recovery and corrupted-image rejection have
+not yet been tested. NAND remains untouched by this boot procedure.
