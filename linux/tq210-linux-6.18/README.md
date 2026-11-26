@@ -130,3 +130,18 @@ and relocates the images. No storage writes. Test the resulting shell:
     mount
 
 If PID1 or mount errors appear, capture the full serial boot log.
+
+## First BusyBox hardware boot (2026-11-26)
+
+Build of 469fb56 succeeded: static ARM ELF32 BusyBox 1.36.1 (670 KiB),
+gzip cpio payload 431582 bytes, legacy ramdisk 431646 bytes.
+New USB identity U-Boot built at 14:30:26 successfully downloaded all
+three images. bootz 26000000 2c000000 2a000000 verified the ramdisk
+checksum and relocated it to 0x5eb4a000. Linux unpacked initramfs,
+freed its 424 KiB input buffer, ran /init, and printed the BusyBox
+ash interactive shell prompt. User executed ls in empty /root.
+No kernel panic or mount failure shown. The literal prompt \\w is
+because ASH_EXPAND_PRMT was disabled; enable it in the next rootfs
+build, along with interactive top and CPU percentages. This is a
+userspace-only change and needs no kernel or U-Boot rebuild. Runtime
+stress, actual clock accuracy and peripherals remain unverified.

@@ -37,7 +37,7 @@ make -C "$bb" ARCH=arm CROSS_COMPILE="$cross" CC="$cc" allnoconfig
 cfg="$kernel/scripts/config"
 applets="sh cat ls cp mv rm mkdir rmdir ln chmod chown touch echo printf pwd basename dirname head tail wc sort uniq grep sed cut tr find xargs tee dd sync df du free ps top uname uptime dmesg mount umount hostname sleep setsid cttyhack stty clear id date hexdump od true false"
 # sh is a shell choice, the other applet names match BusyBox Kconfig.
-for opt in STATIC BUSYBOX LFS SHOW_USAGE FEATURE_VERBOSE_USAGE ASH SH_IS_ASH ASH_JOB_CONTROL FEATURE_EDITING FEATURE_EDITING_HISTORY; do
+for opt in STATIC BUSYBOX LFS SHOW_USAGE FEATURE_VERBOSE_USAGE ASH SH_IS_ASH ASH_JOB_CONTROL ASH_EXPAND_PRMT FEATURE_EDITING FEATURE_EDITING_HISTORY FEATURE_TOP_INTERACTIVE FEATURE_TOP_CPU_USAGE_PERCENTAGE; do
     "$cfg" --file "$bb/.config" --enable "$opt"
 done
 "$cfg" --file "$bb/.config" --disable SH_IS_NONE --disable SH_IS_HUSH
