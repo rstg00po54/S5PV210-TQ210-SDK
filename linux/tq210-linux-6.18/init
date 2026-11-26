@@ -1,0 +1,22 @@
+#!/bin/sh
+# Minimal RAM-only userspace. PID 1 remains alive when the shell exits.
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export HOME=/root TERM=vt100
+mount -t devtmpfs devtmpfs /dev || echo "devtmpfs mount failed"
+mount -t proc proc /proc || echo "proc mount failed"
+mount -t sysfs sysfs /sys || echo "sysfs mount failed"
+mount -t tmpfs tmpfs /tmp || echo "tmpfs mount failed"
+hostname tq210
+cd /root
+export PS1='root@tq210:\w# '
+echo
+echo "========================================"
+echo " TQ210 Linux RAM system"
+uname -a
+echo " BusyBox userspace ready"
+echo "========================================"
+while :; do
+    setsid cttyhack /bin/sh -i
+    echo "Shell exited; restarting in one second"
+    sleep 1
+done

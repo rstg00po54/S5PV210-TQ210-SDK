@@ -57,7 +57,7 @@ the top of DDR. Linux normally decompresses near 0x20008000.
 First objective is early console and successful kernel initialization.
 Without initramfs or rootfs, a final VFS panic is expected and does not
 by itself imply a platform failure. Do not use the U-Boot control DT
-as a Linux DT. This native board port has not been cross-compiled or booted.
+as a Linux DT. The first kernel boot has been validated below.
 
 ## First hardware boot (2026-11-26)
 
@@ -73,3 +73,60 @@ Unresolved diagnostics: pinctrl wakeup device link, cache hierarchy
 reporting, Cortex-A8 Spectre v2 mitigation warning. No claim of full
 peripheral validation or measured oscillator accuracy. Next: RAM-only
 initramfs with an ARM userspace and /init.
+
+## BusyBox initramfs (RAM-only)
+
+From linux/ (after the successful kernel build):
+
+    sudo apt install curl bzip2 gzip libc6-dev-armhf-cross
+    sh tq210-linux-6.18/build-rootfs.sh
+
+The helper downloads the pinned BusyBox 1.36.1 source and checks its
+SHA-256, cross-compiles a static ARM executable using GCC 10, and builds
+root-owned newc cpio with /init and /dev/console without root privileges.
+Output: linux/build-rootfs-tq210/rootfs.cpio.gz and rootfs.uimg.
+The latter is a legacy U-Boot RAMDisk image (gzip-compressed cpio payload),
+so raw-initrd support is not required. No kernel rebuild needed if
+CONFIG_BLK_DEV_INITRD and CONFIG_RD_GZIP remain enabled. This is a lab-only
+root shell, no network, no login/password, no persistence. BusyBox source
+and build outputs are ignored. Source build and hardware boot still need
+validation on the target host.
+
+Cold boot U-Boot through OpenBoot as before. With the corrected USB ID,
+use sudo fastboot on the host, no visor unbind. Each download must finish
+with OKAY, then exit Fastboot on UART with Ctrl-C before copying.
+
+    # UART
+    fastboot usb 0
+    # Ubuntu, from linux/
+    sudo fastboot stage build-tq210-6.18/arch/arm/boot/dts/samsung/s5pv210-tq210.dtb
+    # UART Ctrl-C
+    cp.b 26000000 2a000000 ${filesize}
+    fdt addr 2a000000
+    fdt header
+    fastboot usb 0
+    # Ubuntu
+    sudo fastboot stage build-rootfs-tq210/rootfs.uimg
+    # UART Ctrl-C
+    cp.b 26000000 2c000000 ${filesize}
+    md.b 2c000000 4
+    fastboot usb 0
+    # Ubuntu
+    sudo fastboot stage build-tq210-6.18/arch/arm/boot/zImage
+    # UART Ctrl-C
+    setenv bootargs 'console=ttySAC0,115200n8 earlycon ignore_loglevel clk_ignore_unused rdinit=/init'
+    bootz 26000000 2c000000 2a000000
+
+The expected ramdisk magic at 0x2c000000 is 27 05 19 56. U-Boot validates
+and relocates the images. No storage writes. Test the resulting shell:
+
+    uname -a
+    cat /proc/cpuinfo
+    free -m
+    cat /proc/interrupts
+    cat /proc/uptime
+    ls /dev
+    ps
+    mount
+
+If PID1 or mount errors appear, capture the full serial boot log.
