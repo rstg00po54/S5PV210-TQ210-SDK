@@ -2,6 +2,8 @@
 #ifndef __CONFIG_TQ210_H
 #define __CONFIG_TQ210_H
 
+#include <asm/arch/cpu.h>
+
 /* Physical DDR window verified by OpenBoot: 0x20000000-0x5fffffff. */
 #define CFG_SYS_SDRAM_BASE	0x20000000
 
