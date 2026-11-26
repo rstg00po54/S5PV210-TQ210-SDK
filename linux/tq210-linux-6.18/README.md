@@ -407,3 +407,14 @@ boundary and end of the address range. This is sampled access, not
 a full-device integrity or anti-alias test. No ECC correction yet.
 The throughput command could not run because BusyBox has no time
 applet; use /proc/uptime before and after dd instead. No NAND writes.
+
+### NAND bad-block and sequential read baseline
+
+MTD sysfs: bad_blocks=2, bbt_blocks=0, flags=0x0, ecc_strength=0.
+Matches the previous bare-metal bad-block candidate count, but block
+indices have not been compared. A 16 MiB sequential raw read
+(dd bs=131072 count=128 to /dev/null) completed with 128+0 records
+in and out. /proc/uptime before/after: 306.80/318.09 seconds;
+11.29 s elapsed, approximately 1.42 MiB/s including operator and
+command overhead, not an isolated throughput measurement. No ECC
+correction or full-device data integrity validation yet. No NAND writes.
