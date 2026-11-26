@@ -943,3 +943,35 @@ Run python3 tq210-linux-6.18/audit-nand-boot.py from linux
 against the original vendor binary; examine actual first-stage
 header and disassembly, confirm OM straps and ROM rules before
 building any NAND flash image. Keep USB recovery available.
+
+### Vendor BL1 checksum and ECC evidence; offline packer
+
+Vendor binary audit: size 442368 bytes, header words
+00002000 00000000 00000000 00000000; ARM B at 0x10 -> 0x64.
+Sum of bytes [16,8192) is 0x000e726e.
+Original common/cmd_nand.c computes the 8 KiB BL1 checksum
+at write-to-zero time (EVT1 non-fused/non-secure path):
+sum bytes 16 through 8191, store little-endian u32 at offset 8.
+Thus zero checksum in distributed file is a placeholder.
+Vendor cpu/s5pv210/nand.c s3c_nand_write_page_8bit uses four
+512-byte steps, 13 parity bytes each, offset 12 for EVT1.
+Original NAND core routes first 256 2KiB pages to BCH8.
+Do not copy the vendor OOB loop off-by-one. Existing hardware
+BCH8 layout 12..63 matches the intended layout.
+This is source evidence, not yet verified ROM boot on this board.
+
+openboot/tools/pack-nand-bl1.py generates only an 8192-byte
+main-area image, 16-byte header and zero-padded payload linked
+at 0xd0020010; no device writes or OOB generation. Existing
+USB raw payloads do NOT contain the header. First use the
+rom_sram diagnostic (no DDR or NAND access), which assumes
+USB-style ROM clocks; NAND ROM clock state remains unverified.
+Build from openboot:
+    sh boot/build.sh
+    wc -c out/rom_sram.bin out/rom_ddr_row14.bin
+    python3 tools/pack-nand-bl1.py out/rom_sram.bin out/nand-bl1-probe.bin
+    xxd -l 32 out/nand-bl1-probe.bin
+Packer refuses payload >8176 bytes and overwrite. Existing
+linker also reserves stack/BSS within 16 KiB SRAM; check map
+and disassembly before any flash. Do not burn this probe yet.
+Confirm board OM strap selection and USB recovery method.
