@@ -15,5 +15,5 @@ for opt in USB_GADGET USB_DWC2 USB_DWC2_PERIPHERAL PHY_SAMSUNG_USB2 PHY_S5PV210_
         echo "Required config missing: $opt" >&2; exit 1;
     }
 done
-make -C "$src" O="$out" CC="$cc" -j"${JOBS:-$(nproc)}" zImage samsung/s5pv210-tq210-nand.dtb samsung/s5pv210-tq210-nand-ecc.dtb samsung/s5pv210-tq210-nand-rwtest.dtb
-ls -lh "$out/arch/arm/boot/zImage" "$out/arch/arm/boot/dts/samsung/s5pv210-tq210-nand.dtb" "$out/arch/arm/boot/dts/samsung/s5pv210-tq210-nand-ecc.dtb" "$out/arch/arm/boot/dts/samsung/s5pv210-tq210-nand-rwtest.dtb"
+make -C "$src" O="$out" CC="$cc" -j"${JOBS:-$(nproc)}" zImage samsung/s5pv210-tq210-nand.dtb samsung/s5pv210-tq210-nand-ecc.dtb samsung/s5pv210-tq210-nand-rwtest.dtb samsung/s5pv210-tq210-nand-bch.dtb
+ls -lh "$out/arch/arm/boot/zImage" "$out/arch/arm/boot/dts/samsung/s5pv210-tq210-nand.dtb" "$out/arch/arm/boot/dts/samsung/s5pv210-tq210-nand-ecc.dtb" "$out/arch/arm/boot/dts/samsung/s5pv210-tq210-nand-rwtest.dtb" "$out/arch/arm/boot/dts/samsung/s5pv210-tq210-nand-bch.dtb"

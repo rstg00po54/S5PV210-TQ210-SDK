@@ -4,8 +4,8 @@
  * Register sequence and pin routing from runtime/drivers/nand.c.
  * Optional experimental factory SLC 1-bit ECC, based on Samsung's
  * GPLv2 s3c_nand.c (Copyright (c) 2009 Samsung Electronics Co., Ltd.).
- * Normal MTD operations remain read only. Explicit scratch boot tests
- * can program and erase one checked blank block before MTD registration.
+ * Raw and SLC diagnostic modes are read-only. The opt-in BCH8 MTD
+ * mode exposes standard read/write/erase; no automatic erase on boot.
  */
 #include <linux/bitops.h>
 #include <linux/clk.h>
@@ -61,6 +61,8 @@ struct tq210_nand {
 	void __iomem *base;
 	bool hw_ecc;
 	bool scratch_test;
+	bool bch_rw;
+	u8 *io_buf;
 	void __iomem *bch;
 	const u8 *bch_expected;
 	u32 bch_column;
@@ -224,7 +226,7 @@ static int tq210_exec_op(struct nand_chip *chip,
 	u32 status;
 	int ret = 0;
 
-	if (op->cs || op->deassert_wp)
+	if (op->cs || (op->deassert_wp && !n->bch_rw))
 		return -EOPNOTSUPP;
 
 	/* Validate the entire operation before selecting the device. */
@@ -233,11 +235,20 @@ static int tq210_exec_op(struct nand_chip *chip,
 
 		switch (in->type) {
 		case NAND_OP_CMD_INSTR:
-			if (!tq210_read_command(in->ctx.cmd.opcode))
+			if (!tq210_read_command(in->ctx.cmd.opcode) &&
+			    !(n->bch_rw && op->deassert_wp &&
+			      (in->ctx.cmd.opcode == NAND_CMD_SEQIN ||
+			       in->ctx.cmd.opcode == NAND_CMD_PAGEPROG ||
+			       in->ctx.cmd.opcode == NAND_CMD_ERASE1 ||
+			       in->ctx.cmd.opcode == NAND_CMD_ERASE2)))
 				return -EOPNOTSUPP;
 			break;
 		case NAND_OP_ADDR_INSTR:
 			if (in->ctx.addr.naddrs > 5)
+				return -EOPNOTSUPP;
+			break;
+		case NAND_OP_DATA_OUT_INSTR:
+			if (!n->bch_rw || !op->deassert_wp)
 				return -EOPNOTSUPP;
 			break;
 		case NAND_OP_DATA_IN_INSTR:
@@ -250,7 +261,7 @@ static int tq210_exec_op(struct nand_chip *chip,
 	if (check_only)
 		return 0;
 
-	writel(NF_ENABLE | NF_CE1 | (n->hw_ecc ? NF_MECCLOCK : 0),
+	writel(NF_ENABLE | NF_CE1 | ((n->hw_ecc || n->bch_rw) ? NF_MECCLOCK : 0),
 	       n->base + NFCONT);
 	for (i = 0; i < op->ninstrs; i++) {
 		const struct nand_op_instr *in = &op->instrs[i];
@@ -287,6 +298,11 @@ static int tq210_exec_op(struct nand_chip *chip,
 				((u8 *)in->ctx.data.buf.in)[j] =
 					readb(n->base + NFDATA);
 			break;
+		case NAND_OP_DATA_OUT_INSTR:
+			for (j = 0; j < in->ctx.data.len; j++)
+				writeb(((const u8 *)in->ctx.data.buf.out)[j],
+				       n->base + NFDATA);
+			break;
 		case NAND_OP_WAITRDY_INSTR:
 			/* tWB guard, then bounded R/B polling (NFSTAT bit 0). */
 			udelay(2);
@@ -304,7 +320,7 @@ static int tq210_exec_op(struct nand_chip *chip,
 			ndelay(in->delay_ns);
 	}
 	writel(NF_ENABLE | NF_CE0 | NF_CE1 |
-	       (n->hw_ecc ? NF_MECCLOCK : 0), n->base + NFCONT);
+	       ((n->hw_ecc || n->bch_rw) ? NF_MECCLOCK : 0), n->base + NFCONT);
 	return ret;
 }
 
@@ -391,6 +407,39 @@ static int tq210_write_page_denied(struct nand_chip *chip, const u8 *buf,
 	return -EROFS;
 }
 
+
+static int tq210_bch_mtd_read(struct nand_chip *chip, u8 *buf,
+			      int oob_required, int page);
+static int tq210_bch_mtd_write(struct nand_chip *chip, const u8 *buf,
+			       int oob_required, int page);
+static int tq210_bch_mtd_write_raw(struct nand_chip *chip, const u8 *buf,
+				   int oob_required, int page);
+
+static int tq210_bch_oob_ecc(struct mtd_info *mtd, int section,
+			      struct mtd_oob_region *region)
+{
+	if (section)
+		return -ERANGE;
+	region->offset = 12;
+	region->length = 52;
+	return 0;
+}
+
+static int tq210_bch_oob_free(struct mtd_info *mtd, int section,
+			       struct mtd_oob_region *region)
+{
+	if (section)
+		return -ERANGE;
+	region->offset = 2;
+	region->length = 10;
+	return 0;
+}
+
+static const struct mtd_ooblayout_ops tq210_bch_layout = {
+	.ecc = tq210_bch_oob_ecc,
+	.free = tq210_bch_oob_free,
+};
+
 static int tq210_attach_chip(struct nand_chip *chip)
 {
 	struct mtd_info *mtd = nand_to_mtd(chip);
@@ -401,7 +450,7 @@ static int tq210_attach_chip(struct nand_chip *chip)
 	    mtd->erasesize != SZ_128K || mtd->size != SZ_1G)
 		return -ENODEV;
 	chip->ecc.engine_type = NAND_ECC_ENGINE_TYPE_NONE;
-	if (!n->hw_ecc)
+	if (!n->hw_ecc && !n->bch_rw)
 		return 0;
 	if (chip->id.len < sizeof(expected_id) ||
 	    memcmp(chip->id.data, expected_id, sizeof(expected_id)))
@@ -410,6 +459,17 @@ static int tq210_attach_chip(struct nand_chip *chip)
 	chip->options |= NAND_NO_SUBPAGE_WRITE;
 	chip->ecc.engine_type = NAND_ECC_ENGINE_TYPE_ON_HOST;
 	chip->ecc.placement = NAND_ECC_PLACEMENT_OOB;
+	if (n->bch_rw) {
+		chip->ecc.algo = NAND_ECC_ALGO_BCH;
+		chip->ecc.size = TQ_ECC_STEP;
+		chip->ecc.bytes = BCH_PARITY_BYTES;
+		chip->ecc.strength = 8;
+		chip->ecc.read_page = tq210_bch_mtd_read;
+		chip->ecc.write_page = tq210_bch_mtd_write;
+		chip->ecc.write_page_raw = tq210_bch_mtd_write_raw;
+		mtd_set_ooblayout(mtd, &tq210_bch_layout);
+		return 0;
+	}
 	chip->ecc.algo = NAND_ECC_ALGO_HAMMING;
 	chip->ecc.size = TQ_ECC_STEP;
 	chip->ecc.bytes = TQ_ECC_BYTES;
@@ -472,7 +532,8 @@ static int tq210_scratch_status(struct tq210_nand *n)
 	writeb(NAND_CMD_STATUS, n->base + NFCMD);
 	udelay(2);
 	status = readb(n->base + NFDATA);
-	dev_info(nand_to_mtd(&n->chip)->dev.parent, "RWTEST NAND status=%02x\n", status);
+	if (!n->bch_rw)
+		dev_info(nand_to_mtd(&n->chip)->dev.parent, "RWTEST NAND status=%02x\n", status);
 	return (status & 0xc1) == 0xc0 ? 0 : -EIO;
 }
 
@@ -518,7 +579,8 @@ static int tq210_scratch_program(struct tq210_nand *n, unsigned int page,
 	unsigned int step, i;
 	int ret;
 
-	if (page != TQ_SCRATCH_PAGE && page != TQ_SCRATCH_PAGE + 1)
+	if (page >= 524288U ||
+	    (!n->bch_rw && page != TQ_SCRATCH_PAGE && page != TQ_SCRATCH_PAGE + 1))
 		return -EPERM;
 
 	tq210_scratch_select(n);
@@ -559,7 +621,7 @@ static int tq210_scratch_program(struct tq210_nand *n, unsigned int page,
 			raw[TQ_PAGE + BCH_PARITY_OFFSET + step * BCH_PARITY_BYTES + i] =
 				readl(n->bch + 0x90 + (i / 4) * 4) >> ((i % 4) * 8);
 	}
-	if (encode && !memchr_inv(raw + TQ_PAGE + BCH_PARITY_OFFSET, 0xff, 52)) {
+	if (encode && !n->bch_rw && !memchr_inv(raw + TQ_PAGE + BCH_PARITY_OFFSET, 0xff, 52)) {
 		ret = -EIO;
 		writeb(NAND_CMD_RESET, n->base + NFCMD);
 		(void)tq210_scratch_ready(n);
@@ -710,6 +772,111 @@ free:
 	return ret;
 }
 
+
+/* NAND core serializes these callbacks and invalidates its page cache.
+ * Read raw once to detect erased sectors and verify the decoder's inputs.
+ */
+static int tq210_bch_mtd_read(struct nand_chip *chip, u8 *buf,
+			      int oob_required, int page)
+{
+	struct tq210_nand *n = nand_get_controller_data(chip);
+	struct mtd_info *mtd = nand_to_mtd(chip);
+	u8 parity[BCH_PARITY_BYTES], *data;
+	unsigned int step, i, j, count, bits, max_bits = 0;
+	unsigned int pos[8], pat[8];
+	int ret;
+
+	ret = nand_read_page_op(chip, page, 0, n->io_buf, TQ_RAW);
+	if (ret)
+		return ret;
+	memcpy(chip->oob_poi, n->io_buf + TQ_PAGE, TQ_OOB);
+	for (step = 0; step < 4; step++) {
+		data = buf + step * TQ_ECC_STEP;
+		memcpy(data, n->io_buf + step * TQ_ECC_STEP, TQ_ECC_STEP);
+		n->bch_column = TQ_PAGE + BCH_PARITY_OFFSET +
+				step * BCH_PARITY_BYTES;
+		memcpy(parity, n->io_buf + n->bch_column, sizeof(parity));
+		if (!memchr_inv(data, 0xff, TQ_ECC_STEP) &&
+		    !memchr_inv(parity, 0xff, sizeof(parity)))
+			continue;
+		n->bch_expected = parity;
+		n->bch_parity_match = false;
+		ret = nand_read_page_op(chip, page, step * TQ_ECC_STEP,
+					data, TQ_ECC_STEP);
+		n->bch_expected = NULL;
+		if (ret)
+			return ret;
+		if (!n->bch_parity_match ||
+		    memcmp(data, n->io_buf + step * TQ_ECC_STEP, TQ_ECC_STEP))
+			return -EIO;
+		count = n->bch_secstat & 15;
+		if (count > 8 || (n->bch_secstat & BIT(29)))
+			goto erased_or_failed;
+
+		bits = 0;
+		for (i = 0; i < count; i++) {
+			pos[i] = (n->bch_erl[i / 2] >> ((i % 2) * 16)) & 1023;
+			pat[i] = (n->bch_erp[i / 4] >> ((i % 4) * 8)) & 255;
+			if (pos[i] >= TQ_ECC_STEP + BCH_PARITY_BYTES || !pat[i])
+				goto erased_or_failed;
+			for (j = 0; j < i; j++)
+				if (pos[j] == pos[i])
+					goto erased_or_failed;
+			bits += hweight8(pat[i]);
+		}
+		if (bits > 8)
+			goto erased_or_failed;
+		for (i = 0; i < count; i++)
+			if (pos[i] < TQ_ECC_STEP)
+				data[pos[i]] ^= pat[i];
+		mtd->ecc_stats.corrected += bits;
+		max_bits = max(max_bits, bits);
+		continue;
+
+erased_or_failed:
+		ret = nand_check_erased_ecc_chunk(data, TQ_ECC_STEP,
+						  parity, sizeof(parity),
+						  NULL, 0, 8);
+		if (ret < 0) {
+			mtd->ecc_stats.failed++;
+			dev_warn_ratelimited(mtd->dev.parent,
+				"BCH8 uncorrectable page=%d sector=%u status=%08x\n",
+				page, step, n->bch_secstat);
+		} else {
+			mtd->ecc_stats.corrected += ret;
+			max_bits = max(max_bits, (unsigned int)ret);
+		}
+	}
+	return max_bits;
+}
+
+static int tq210_bch_mtd_program(struct nand_chip *chip, const u8 *buf,
+				 int oob_required, int page, bool encode)
+{
+	struct tq210_nand *n = nand_get_controller_data(chip);
+
+	if (!n->bch_rw)
+		return -EROFS;
+	memcpy(n->io_buf, buf, TQ_PAGE);
+	if (oob_required)
+		memcpy(n->io_buf + TQ_PAGE, chip->oob_poi, TQ_OOB);
+	else
+		memset(n->io_buf + TQ_PAGE, 0xff, TQ_OOB);
+	return tq210_scratch_program(n, page, n->io_buf, encode);
+}
+
+static int tq210_bch_mtd_write(struct nand_chip *chip, const u8 *buf,
+			       int oob_required, int page)
+{
+	return tq210_bch_mtd_program(chip, buf, oob_required, page, true);
+}
+
+static int tq210_bch_mtd_write_raw(struct nand_chip *chip, const u8 *buf,
+				   int oob_required, int page)
+{
+	return tq210_bch_mtd_program(chip, buf, oob_required, page, false);
+}
+
 static int tq210_nand_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -735,16 +902,24 @@ static int tq210_nand_probe(struct platform_device *pdev)
 					 "embedsky,experimental-slc-ecc");
 	n->scratch_test = of_property_read_bool(dev->of_node,
 					       "embedsky,experimental-bch8-rwtest");
-	if (n->hw_ecc && n->scratch_test)
+	n->bch_rw = of_property_read_bool(dev->of_node, "embedsky,experimental-bch8-mtd");
+	if ((int)n->hw_ecc + (int)n->scratch_test + (int)n->bch_rw > 1)
 		return -EINVAL;
-	if ((n->hw_ecc || n->scratch_test) &&
+	if ((n->hw_ecc || n->scratch_test || n->bch_rw) &&
 	    platform_get_resource(pdev, IORESOURCE_MEM, 1)) {
 		n->bch = devm_platform_ioremap_resource(pdev, 1);
 		if (IS_ERR(n->bch))
 			return PTR_ERR(n->bch);
 	}
+	if (n->bch_rw) {
+		if (!n->bch)
+			return -ENODEV;
+		n->io_buf = devm_kmalloc(dev, TQ_RAW, GFP_KERNEL);
+		if (!n->io_buf)
+			return -ENOMEM;
+	}
 	writel(NF_ENABLE | NF_CE0 | NF_CE1 |
-	       (n->hw_ecc ? NF_MECCLOCK : 0), n->base + NFCONT);
+	       ((n->hw_ecc || n->bch_rw) ? NF_MECCLOCK : 0), n->base + NFCONT);
 	writel(n->hw_ecc ? NF_TIMING & ~NF_ECC_MODE : NF_TIMING,
 	       n->base + NFCONF);
 	dev_info(dev, "NFCONF=%08x NFCONT=%08x NFSTAT=%08x clock=%lu Hz\n",
@@ -755,13 +930,15 @@ static int tq210_nand_probe(struct platform_device *pdev)
 	n->controller.ops = &tq210_nand_ops;
 	chip = &n->chip;
 	chip->controller = &n->controller;
-	chip->options |= NAND_ROM;
+	if (!n->bch_rw)
+		chip->options |= NAND_ROM;
 	chip->ecc.engine_type = NAND_ECC_ENGINE_TYPE_NONE;
 	nand_set_controller_data(chip, n);
 	nand_set_flash_node(chip, dev->of_node);
 	mtd = nand_to_mtd(chip);
 	mtd->dev.parent = dev;
-	mtd->name = n->hw_ecc ? "tq210-nand-ecc-ro" : "tq210-nand-raw-ro";
+	mtd->name = n->bch_rw ? "tq210-nand-bch8" :
+		    n->hw_ecc ? "tq210-nand-ecc-ro" : "tq210-nand-raw-ro";
 
 	/* Standard NAND identification and in-memory bad-block scan.
 	 * No flash BBT is requested. The exec_op whitelist also blocks writes.
@@ -777,16 +954,20 @@ static int tq210_nand_probe(struct platform_device *pdev)
 		else
 			dev_info(dev, "NAND RWTEST PASS\n");
 	}
-	mtd->flags &= ~MTD_WRITEABLE;
+	if (!n->bch_rw)
+		mtd->flags &= ~MTD_WRITEABLE;
 	ret = mtd_device_register(mtd, NULL, 0);
 	if (ret) {
 		nand_cleanup(chip);
 		return ret;
 	}
 	platform_set_drvdata(pdev, n);
-	dev_warn(dev, "1 GiB NAND registered READ ONLY; %s\n",
-		 n->hw_ecc ? "experimental 1-bit/512B ECC CHECK ONLY, OOB 40..55" :
-			     "ECC correction disabled");
+	if (n->bch_rw)
+		dev_warn(dev, "1 GiB NAND registered WRITABLE; BCH8/512 OOB 12..63; no automatic erase\n");
+	else
+		dev_warn(dev, "1 GiB NAND registered READ ONLY; %s\n",
+			 n->hw_ecc ? "experimental 1-bit/512B ECC CHECK ONLY, OOB 40..55" :
+				     "ECC correction disabled");
 	return 0;
 }
 

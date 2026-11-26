@@ -523,3 +523,27 @@ On target:
 
 This is the hardware validation stage, not yet a general writable
 MTD driver. Cross-compile and board test pending.
+
+### Hardware RWTEST passed; standard MTD BCH8 experiment
+
+2026-11-26: Linux build #4, block 8159, page 522176 and 522177.
+Blank check, initial erase, ECC encode and raw compare, clean decode,
+injected one and eight single-bit errors corrected in RAM, final
+erase and all 64 raw pages FF: PASS. NAND status e0. Original MTD
+remained read-only. This validates the tested patterns, not all
+error cases or all blocks.
+
+New --bch-rw DT exposes standard writable MTD with hardware BCH8,
+512-byte steps, 13 bytes parity, OOB 12..63, free OOB 2..11.
+No automatic erase, no flash BBT requested, no subpage programming.
+Old factory SLC pages are not compatible with this format. Raw
+reads remain available. Erased-sector handling, standard MTD
+read/write/erase, OOB handling, uncorrectable errors and long-term
+reliability require further testing. USB boot recovery remains.
+Compile and board test pending for this variant.
+
+    sh tq210-linux-6.18/build-nand-kernel.sh
+    sh tq210-linux-6.18/boot-fit.sh --bch-rw
+
+Check /proc/mtd, flags, ecc_strength, ecc_step_size, bad_blocks.
+Do not erase the whole device until the standard MTD test passes.
