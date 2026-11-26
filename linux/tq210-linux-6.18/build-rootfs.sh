@@ -35,7 +35,7 @@ printf '%s  %s\n' b8cc24c9574d809e7279c3be349795c5d5ceb6fdf19ca709f80cde50e47de3
 # Start with a minimal config, not a networking/desktop distribution.
 make -C "$bb" ARCH=arm CROSS_COMPILE="$cross" CC="$cc" allnoconfig
 cfg="$kernel/scripts/config"
-applets="sh cat ls cp mv rm mkdir rmdir ln chmod chown touch echo printf pwd basename dirname head tail wc sort uniq grep sed cut tr find xargs tee dd sync df du free ps top uname uptime dmesg mount umount hostname sleep setsid cttyhack stty clear id date hexdump od true false"
+applets="kill sh cat ls cp mv rm mkdir rmdir ln chmod chown touch echo printf pwd basename dirname head tail wc sort uniq grep sed cut tr find xargs tee dd sync df du free ps top uname uptime dmesg mount umount hostname sleep setsid cttyhack stty clear id date hexdump od true false"
 # sh is a shell choice, the other applet names match BusyBox Kconfig.
 for opt in STATIC BUSYBOX LFS SHOW_USAGE FEATURE_VERBOSE_USAGE ASH SH_IS_ASH ASH_JOB_CONTROL ASH_EXPAND_PRMT FEATURE_EDITING FEATURE_EDITING_HISTORY FEATURE_TOP_INTERACTIVE FEATURE_TOP_CPU_USAGE_PERCENTAGE; do
     "$cfg" --file "$bb/.config" --enable "$opt"
@@ -91,6 +91,16 @@ done
 printf 'root:x:0:0:root:/root:/bin/sh\n' > "$out/passwd"
 printf 'root:x:0:\n' > "$out/group"
 printf 'file /etc/passwd %s/passwd 0644 0 0\nfile /etc/group %s/group 0644 0 0\n' "$out" "$out" >> "$manifest"
+printf 'file /sbin/tq210-usb %s/tq210-usb 0755 0 0\n' "$here" >> "$manifest"
+if [ -n "${ADBD_BIN:-}" ]; then
+    adbd=$(CDPATH= cd -- "$(dirname -- "$ADBD_BIN")" && pwd)/$(basename -- "$ADBD_BIN")
+    LC_ALL=C "${cross}readelf" -h "$adbd" | grep -q 'Machine:.*ARM'
+    if LC_ALL=C "${cross}readelf" -l "$adbd" | grep -q INTERP; then
+        echo "ADBD_BIN must be a static ARM Linux adbd" >&2; exit 1
+    fi
+    case "$adbd" in *[[:space:]]*) echo "ADBD_BIN path contains whitespace" >&2; exit 1;; esac
+    printf 'file /usr/bin/adbd %s 0755 0 0\ndir /system 0755 0 0\ndir /system/bin 0755 0 0\nslink /system/bin/sh /bin/sh 0777 0 0\n' "$adbd" >> "$manifest"
+fi
 "$gen" "$manifest" > "$out/rootfs.cpio"
 gzip -n -9 -c "$out/rootfs.cpio" > "$out/rootfs.cpio.gz"
 "$mkimage" -A arm -O linux -T ramdisk -C gzip -n "TQ210 BusyBox $version" -d "$out/rootfs.cpio.gz" "$out/rootfs.uimg"

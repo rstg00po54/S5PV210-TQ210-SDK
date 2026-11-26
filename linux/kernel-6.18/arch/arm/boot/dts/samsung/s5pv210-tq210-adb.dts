@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
+#include "s5pv210-tq210.dts"
+
+&hsotg {
+	dr_mode = "peripheral";
+	status = "okay";
+};
+
+&usbphy {
+	status = "okay";
+};

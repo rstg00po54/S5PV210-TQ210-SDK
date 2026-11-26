@@ -1,0 +1,71 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Explicit manual activation only, for a trusted private USB connection.
+set -eu
+g=/sys/kernel/config/usb_gadget/tq210
+mode=${1:-}
+case "$mode" in acm|adb|stop) ;; *) echo "Usage: tq210-usb acm|adb|stop"; exit 2;; esac
+if [ "$mode" = stop ]; then
+    [ -d "$g" ] || exit 0
+    echo "" > "$g/UDC"
+    if [ -f /run/adbd.pid ]; then
+        kill "$(cat /run/adbd.pid)" 2>/dev/null || :
+        rm -f /run/adbd.pid
+    fi
+    if [ -e "$g/configs/c.1/ffs.adb" ]; then
+        umount /dev/usb-ffs/adb
+        rm "$g/configs/c.1/ffs.adb"
+        rmdir "$g/functions/ffs.adb"
+    fi
+    if [ -e "$g/configs/c.1/acm.usb0" ]; then
+        rm "$g/configs/c.1/acm.usb0"
+        rmdir "$g/functions/acm.usb0"
+    fi
+    rmdir "$g/configs/c.1/strings/0x409" "$g/configs/c.1" "$g/strings/0x409" "$g"
+    exit 0
+fi
+if [ "$mode" = adb ] && [ ! -x /usr/bin/adbd ]; then
+    echo "No ARM static adbd in this image. Test ACM first."
+    exit 1
+fi
+set -- /sys/class/udc/*
+[ -e "$1" ] || { echo "No UDC registered; inspect dmesg"; exit 1; }
+[ "$#" -eq 1 ] || { echo "Expected exactly one UDC"; exit 1; }
+udc=${1##*/}
+[ -d /sys/kernel/config/usb_gadget ] || mount -t configfs configfs /sys/kernel/config
+[ ! -d "$g" ] || { echo "Existing gadget: run tq210-usb stop first"; exit 1; }
+mkdir "$g"
+echo 0x1209 > "$g/idVendor"
+echo 0x0001 > "$g/idProduct"
+echo 0x0200 > "$g/bcdUSB"
+mkdir "$g/strings/0x409"
+echo TQ210-TEST > "$g/strings/0x409/serialnumber"
+echo TQ210 > "$g/strings/0x409/manufacturer"
+echo "TQ210 Linux $mode" > "$g/strings/0x409/product"
+mkdir "$g/configs/c.1"
+mkdir "$g/configs/c.1/strings/0x409"
+echo "$mode" > "$g/configs/c.1/strings/0x409/configuration"
+echo 100 > "$g/configs/c.1/MaxPower"
+if [ "$mode" = acm ]; then
+    mkdir "$g/functions/acm.usb0"
+    ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
+else
+    mkdir "$g/functions/ffs.adb"
+    ln -s "$g/functions/ffs.adb" "$g/configs/c.1/ffs.adb"
+    mkdir -p /dev/usb-ffs/adb /dev/pts
+    grep -q ' /dev/pts ' /proc/mounts || mount -t devpts devpts /dev/pts
+    mount -t functionfs adb /dev/usb-ffs/adb
+    ADBD_SHELL=/bin/sh /usr/bin/adbd > /tmp/adbd.log 2>&1 &
+    echo "$!" > /run/adbd.pid
+    i=0
+    while [ ! -e /dev/usb-ffs/adb/ep1 ] || [ ! -e /dev/usb-ffs/adb/ep2 ]; do
+        i=$((i+1))
+        if [ "$i" -ge 15 ]; then
+            echo "adbd endpoints not ready; see /tmp/adbd.log"
+            exit 1
+        fi
+        sleep 1
+    done
+fi
+echo "$udc" > "$g/UDC"
+echo "TQ210 $mode gadget bound to $udc"

@@ -160,3 +160,31 @@ were mounted. gpiochip0 through gpiochip33 registered; electrical GPIO
 operation and pinctrl IRQs are not tested. VFP/NEON execution, sustained
 memory/scheduler stress, clock accuracy and external peripherals remain
 unvalidated. No storage or network enabled.
+
+## Experimental USB gadget / ADB bring-up
+
+The known-good minimal kernel remains unchanged. Build the independent
+USB kernel and its DTB from linux/: 
+
+    sh tq210-linux-6.18/build-adb-kernel.sh
+    sh tq210-linux-6.18/build-rootfs.sh
+
+Boot with the existing three-image RAM procedure, substituting
+build-tq210-adb/arch/arm/boot/zImage and
+build-tq210-adb/arch/arm/boot/dts/samsung/s5pv210-tq210-adb.dtb.
+At the UART Linux shell inspect ls /sys/class/udc and dmesg, then run
+/sbin/tq210-usb acm. On Ubuntu check lsusb, lsusb -t, and /dev/ttyACM*.
+The ACM function is only a USB transport smoke test, not ADB. Stop it
+with /sbin/tq210-usb stop before changing function.
+
+For actual ADB a separately built, trusted static ARMv7 Linux adbd with
+FunctionFS support is required. Buildroot's android-tools package or a
+Linux standalone port can supply it, but ARM32 compatibility and static
+linkage are not verified yet. Once available, use
+ADBD_BIN=/absolute/path/to/adbd sh tq210-linux-6.18/build-rootfs.sh
+and reboot with the USB kernel and new rootfs. Manually run
+/sbin/tq210-usb adb, then use adb devices / adb shell from the host.
+No daemon starts automatically. Root shell over USB is intended only
+for a trusted isolated test cable; no TCP listener should be enabled.
+1209:0001 is a non-unique private-test VID/PID, not for distribution.
+Both USB kernel and userspace integration are untested on hardware.
