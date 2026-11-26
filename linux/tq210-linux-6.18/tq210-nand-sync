@@ -1,0 +1,11 @@
+#!/bin/sh
+# Run from the NAND console, not ADB (stops USB gadget).
+set -eu
+[ -f /etc/tq210-rootfs-ready ] || { echo "Not NAND rootfs"; exit 1; }
+cd /
+/sbin/tq210-usb stop
+if grep -q ' /mnt/nand ' /proc/mounts; then umount /mnt/nand; fi
+sync
+mount -o remount,ro /
+sync
+echo "NAND rootfs read-only; safe to power-cycle now"

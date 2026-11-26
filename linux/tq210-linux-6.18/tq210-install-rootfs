@@ -1,0 +1,40 @@
+#!/bin/sh
+# Explicit, non-overwriting installation from USB RAM rescue.
+set -eu
+[ "$#" = 1 ] && [ "$1" = --install-rootfs ] || { echo "Usage: tq210-install-rootfs --install-rootfs"; exit 2; }
+[ ! -f /etc/tq210-rootfs-ready ] && [ ! -f /etc/tq210-boot-nand ] || {
+    echo "Refused: boot plain --ubi RAM rescue to install"; exit 1;
+}
+[ -x /sbin/tq210-nand-init ] && [ -x /sbin/tq210-ubi ] || exit 1
+if [ -w /sys/module/ubi/parameters/fm_autoconvert ]; then
+    echo Y > /sys/module/ubi/parameters/fm_autoconvert
+fi
+/sbin/tq210-ubi attach
+/sbin/tq210-ubi create-rootfs
+target=/mnt/rootfs
+mkdir -p "$target"
+if grep -q " $target " /proc/mounts; then
+    echo "Refused: target already mounted"; exit 1
+fi
+mount -t ubifs ubi0:rootfs "$target"
+trap 'sync; umount "$target" || :' EXIT
+if [ -n "$(ls -A "$target")" ]; then
+    echo "Refused: rootfs volume is not empty (no overwrite)"
+    exit 1
+fi
+for d in bin sbin usr etc; do
+    cp -a "/$d" "$target/"
+done
+if [ -d /system ]; then cp -a /system "$target/"; fi
+mkdir -p "$target/dev" "$target/proc" "$target/sys" "$target/tmp" \
+    "$target/root" "$target/run" "$target/mnt/nand"
+chmod 1777 "$target/tmp"
+chmod 700 "$target/root"
+ln -s tq210-nand-init "$target/sbin/init"
+# Commit the ready marker only after all files are copied and synced.
+sync
+printf '%s\n' TQ210-NAND-ROOTFS-V1 > "$target/etc/tq210-rootfs-ready"
+sync
+umount "$target"
+trap - EXIT
+echo "NAND ROOTFS INSTALL PASS (data volume unchanged)"

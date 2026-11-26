@@ -82,28 +82,31 @@ static int ctrl(int mtd, int attach)
 	return ret;
 }
 
-static int create(void)
+static int create(int rootfs)
 {
 	struct ubi_mkvol_req req = {0};
-	char buf[80];
+	char buf[80], path[80];
+	const char *name = rootfs ? "rootfs" : "data";
+	int id = rootfs ? 1 : 0;
 	int fd, ret;
-	if (!access("/sys/class/ubi/ubi0_0", F_OK)) {
-		if (read_attr("/sys/class/ubi/ubi0_0/name", buf, sizeof(buf)) ||
-		    strcmp(buf, "data")) {
-			fprintf(stderr, "Refused: volume 0 already has another name\n");
+	snprintf(path, sizeof(path), "/sys/class/ubi/ubi0_%d", id);
+	if (!access(path, F_OK)) {
+		snprintf(path, sizeof(path), "/sys/class/ubi/ubi0_%d/name", id);
+		if (read_attr(path, buf, sizeof(buf)) || strcmp(buf, name)) {
+			fprintf(stderr, "Refused: volume %d already has another name\n", id);
 			return -1;
 		}
-		puts("Existing data volume retained");
+		printf("Existing %s volume retained\n", name);
 		return 0;
 	}
 	if (errno != ENOENT)
 		return -1;
-	req.vol_id = 0;
+	req.vol_id = id;
 	req.alignment = 1;
-	req.bytes = 128LL * 1024 * 1024;
+	req.bytes = (rootfs ? 256LL : 128LL) * 1024 * 1024;
 	req.vol_type = UBI_DYNAMIC_VOLUME;
-	req.name_len = 4;
-	memcpy(req.name, "data", 5);
+	req.name_len = strlen(name);
+	memcpy(req.name, name, req.name_len + 1);
 	fd = open("/dev/ubi0", O_RDWR);
 	if (fd < 0) {
 		perror("open ubi0");
@@ -114,7 +117,7 @@ static int create(void)
 		perror("UBI_IOCMKVOL");
 	close(fd);
 	if (!ret)
-		puts("Created dynamic data volume (128 MiB requested)");
+		printf("Created dynamic %s volume (%d MiB requested)\n", name, rootfs ? 256 : 128);
 	return ret;
 }
 
@@ -123,8 +126,9 @@ int main(int argc, char **argv)
 	int mtd, state;
 	if (argc != 2 || (strcmp(argv[1], "attach") &&
 			  strcmp(argv[1], "create-data") &&
+			  strcmp(argv[1], "create-rootfs") &&
 			  strcmp(argv[1], "detach"))) {
-		fprintf(stderr, "Usage: %s attach|create-data|detach\n", argv[0]);
+		fprintf(stderr, "Usage: %s attach|create-data|create-rootfs|detach\n", argv[0]);
 		return 2;
 	}
 	mtd = find_mtd();
@@ -150,7 +154,9 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	if (!strcmp(argv[1], "create-data"))
-		return create() ? 1 : 0;
+		return create(0) ? 1 : 0;
+	if (!strcmp(argv[1], "create-rootfs"))
+		return create(1) ? 1 : 0;
 	if (ctrl(mtd, 0))
 		return 1;
 	puts("UBI detach PASS");

@@ -677,3 +677,48 @@ fall back to a full scan. To explicitly recover using the old
 full-scan kernel, retain the previous build or rebuild without
 CONFIG_MTD_UBI_FASTMAP. Merely setting fm_autoconvert=N does not
 necessarily suppress reading an existing fastmap.
+
+### Fastmap pass and NAND rootfs experiment
+
+2026-11-26: first attach 31.83 s, second attach by Fastmap 2.18 s
+(14.6x); 2 bad PEBs, 0 corrupted. Existing data volume mounted
+and probe.txt intact. Cold-boot Fastmap still to verify.
+
+New RAM initramfs includes tq210-ubi, switch_root, installation
+and sync helpers. Existing static adbd reused if built in the
+standard output path. --ubi remains RAM rescue; --nand-rootfs
+selects an additional initramfs with a NAND boot marker, using
+the same validated kernel and partitioned DTB. No automatic
+volume creation or install at boot. Rootfs is dynamic UBI volume
+1 (256 MiB requested); data is unchanged at volume 0. No erase
+of whole NAND, no update to boot-reserved, no NAND kernel boot yet.
+
+From current RAM system unmount data and detach before cold boot.
+On host:
+    git pull
+    sh tq210-linux-6.18/build-rootfs.sh
+    sh tq210-linux-6.18/boot-fit.sh --ubi
+On the RAM console:
+    /sbin/tq210-install-rootfs --install-rootfs
+    /sbin/tq210-ubi detach
+Installer only copies from RAM to an empty rootfs volume, refuses
+nonempty targets, syncs and writes a ready marker last, then unmounts.
+After NAND ROOTFS INSTALL PASS, cold USB boot from host:
+    sh tq210-linux-6.18/boot-fit.sh --nand-rootfs
+Init enables Fastmap, attaches UBI, mounts rootfs read-only to
+check marker, remounts RW, moves dev/proc/sys/tmp and calls
+BusyBox switch_root as PID 1. Missing/invalid rootfs or pre-switch
+failure falls back to RAM shell; after successful switch the old
+initramfs is discarded. For recovery boot plain --ubi again.
+NAND PID 1 mounts data on /mnt/nand; test:
+    cat /proc/mounts
+    cat /etc/tq210-rootfs-ready
+    cat /mnt/nand/probe.txt
+    echo NAND-ROOT-PASS > /root/nand-probe.txt
+    sync
+Run /sbin/tq210-nand-sync from UART before power cycle: stops
+USB, unmounts data, remounts root read-only, syncs. Root UBI stays
+attached until power cycle. Not a full init/shutdown system yet.
+Cold boot --nand-rootfs again, read /root/nand-probe.txt.
+Build, mount moves, switch_root and NAND root shutdown untested
+on hardware. Fastmap is experimental and may fall back to scanning.

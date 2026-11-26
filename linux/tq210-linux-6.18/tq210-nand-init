@@ -1,0 +1,23 @@
+#!/bin/sh
+# PID 1 after switch_root. dev/proc/sys/tmp inherited from RAM init.
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export HOME=/root TERM=vt100
+export PS1='root@tq210-nand:\w# '
+hostname tq210
+mkdir -p /mnt/nand /run
+mount -t tmpfs tmpfs /run || echo "run tmpfs mount failed"
+if [ "$(cat /sys/class/ubi/ubi0_0/name 2>/dev/null)" = data ]; then
+    mount -t ubifs ubi0:data /mnt/nand || echo "data mount failed (rootfs remains available)"
+fi
+cd /root
+echo
+echo "========================================"
+echo " TQ210 Linux NAND rootfs"
+uname -a
+echo " PID 1 running from UBIFS"
+echo "========================================"
+while :; do
+    setsid cttyhack /bin/sh -i
+    echo "Shell exited; restarting in one second"
+    sleep 1
+done

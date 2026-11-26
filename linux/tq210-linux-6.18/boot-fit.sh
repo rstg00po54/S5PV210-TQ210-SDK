@@ -16,14 +16,15 @@ for arg in "$@"; do
         --rwtest) variant=rwtest ;;
         --bch-rw) variant=bch-rw ;;
         --ubi) variant=ubi ;;
+        --nand-rootfs) variant=nand-rootfs ;;
         --ready) ready=yes ;;
-        *) echo "Usage: $0 [--basic|--nand|--ecc|--rwtest|--bch-rw|--ubi] [--ready]" >&2; exit 2 ;;
+        *) echo "Usage: $0 [--basic|--nand|--ecc|--rwtest|--bch-rw|--ubi|--nand-rootfs] [--ready]" >&2; exit 2 ;;
     esac
 done
 if [ "$variant" = basic ]; then
     boot="$linux/build-tq210-6.18/arch/arm/boot"
     dtb="$boot/dts/samsung/s5pv210-tq210.dtb"
-elif [ "$variant" = ubi ]; then
+elif [ "$variant" = ubi ] || [ "$variant" = nand-rootfs ]; then
     boot="$linux/build-tq210-nand/arch/arm/boot"
     dtb="$boot/dts/samsung/s5pv210-tq210-nand-ubi.dtb"
 elif [ "$variant" = bch-rw ]; then
@@ -44,6 +45,9 @@ else
 fi
 kernel="$boot/zImage"
 ramdisk="$linux/build-rootfs-tq210/rootfs.cpio.gz"
+if [ "$variant" = nand-rootfs ]; then
+    ramdisk="$linux/build-rootfs-tq210/rootfs-nand.cpio.gz"
+fi
 uboot="$sdk/u-boot/mainline/build-tq210/u-boot.bin"
 dnw="$openboot/build-host/tq210-dnw"
 loader="$openboot/out/rom_usb_dma_fast.bin"

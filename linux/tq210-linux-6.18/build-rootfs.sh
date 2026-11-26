@@ -35,9 +35,9 @@ printf '%s  %s\n' b8cc24c9574d809e7279c3be349795c5d5ceb6fdf19ca709f80cde50e47de3
 # Start with a minimal config, not a networking/desktop distribution.
 make -C "$bb" ARCH=arm CROSS_COMPILE="$cross" CC="$cc" allnoconfig
 cfg="$kernel/scripts/config"
-applets="test kill sh cat ls cp mv rm mkdir rmdir ln chmod chown touch echo printf pwd basename dirname head tail wc sort uniq grep sed cut tr find xargs tee dd sync df du free ps top uname uptime dmesg mount umount hostname sleep setsid cttyhack stty clear id date hexdump od true false"
+applets="test kill sh cat ls cp mv rm mkdir rmdir ln chmod chown touch echo printf pwd basename dirname head tail wc sort uniq grep sed cut tr find xargs tee dd sync df du free ps top uname uptime dmesg mount umount hostname sleep setsid cttyhack stty clear id date hexdump od true false switch_root"
 # sh is a shell choice, the other applet names match BusyBox Kconfig.
-for opt in STATIC BUSYBOX LFS SHOW_USAGE FEATURE_VERBOSE_USAGE ASH SH_IS_ASH ASH_JOB_CONTROL ASH_EXPAND_PRMT ASH_TEST FEATURE_SH_MATH TEST1 FEATURE_EDITING FEATURE_EDITING_HISTORY FEATURE_EDITING_FANCY_PROMPT FEATURE_TOP_INTERACTIVE FEATURE_TOP_CPU_USAGE_PERCENTAGE; do
+for opt in STATIC BUSYBOX LFS SHOW_USAGE FEATURE_VERBOSE_USAGE ASH SH_IS_ASH ASH_JOB_CONTROL ASH_EXPAND_PRMT ASH_TEST FEATURE_SH_MATH TEST1 FEATURE_EDITING FEATURE_EDITING_HISTORY FEATURE_EDITING_FANCY_PROMPT FEATURE_TOP_INTERACTIVE FEATURE_TOP_CPU_USAGE_PERCENTAGE FEATURE_MOUNT_FLAGS FEATURE_HUMAN_READABLE; do
     "$cfg" --file "$bb/.config" --enable "$opt"
 done
 "$cfg" --file "$bb/.config" --disable SH_IS_NONE --disable SH_IS_HUSH
@@ -48,7 +48,7 @@ for applet in $applets; do
 done
 # Resolve Kconfig dependencies. Oldconfig accepts defaults for any new choices.
 yes '' | make -C "$bb" ARCH=arm CROSS_COMPILE="$cross" CC="$cc" oldconfig
-for opt in STATIC ASH SH_IS_ASH ASH_TEST TEST TEST1 FEATURE_SH_MATH MOUNT UMOUNT SETSID CTTYHACK HOSTNAME UNAME SLEEP LS FREE PS TOP; do
+for opt in STATIC ASH SH_IS_ASH ASH_TEST TEST TEST1 FEATURE_SH_MATH MOUNT UMOUNT SETSID CTTYHACK HOSTNAME UNAME SLEEP LS FREE PS TOP SWITCH_ROOT FEATURE_MOUNT_FLAGS; do
     grep -qx "CONFIG_${opt}=y" "$bb/.config" || {
         echo "BusyBox required config missing: $opt" >&2; exit 1;
     }
@@ -79,6 +79,8 @@ dir /etc 0755 0 0
 dir /root 0700 0 0
 dir /run 0755 0 0
 dir /mnt 0755 0 0
+dir /mnt/nand 0755 0 0
+dir /mnt/rootfs 0755 0 0
 nod /dev/console 0600 0 0 c 5 1
 nod /dev/null 0666 0 0 c 1 3
 nod /dev/tty 0666 0 0 c 5 0
@@ -93,6 +95,15 @@ printf 'root:x:0:0:root:/root:/bin/sh\n' > "$out/passwd"
 printf 'root:x:0:\n' > "$out/group"
 printf 'file /etc/passwd %s/passwd 0644 0 0\nfile /etc/group %s/group 0644 0 0\n' "$out" "$out" >> "$manifest"
 printf 'file /sbin/tq210-usb %s/tq210-usb 0755 0 0\n' "$here" >> "$manifest"
+"$cc" -static -O2 -Wall "$here/tq210-ubi.c" -o "$out/tq210-ubi"
+printf 'file /sbin/tq210-ubi %s/tq210-ubi 0755 0 0\n' "$out" >> "$manifest"
+for script in tq210-nand-init tq210-install-rootfs tq210-nand-sync; do
+    printf 'file /sbin/%s %s/%s 0755 0 0\n' "$script" "$here" "$script" >> "$manifest"
+done
+# Keep existing verified static adbd when rebuilding the RAM system.
+if [ -z "${ADBD_BIN:-}" ] && [ -x "$out/adbd/adbd" ]; then
+    ADBD_BIN="$out/adbd/adbd"
+fi
 if [ -n "${ADBD_BIN:-}" ]; then
     adbd=$(CDPATH= cd -- "$(dirname -- "$ADBD_BIN")" && pwd)/$(basename -- "$ADBD_BIN")
     LC_ALL=C "${cross}readelf" -h "$adbd" | grep -q 'Machine:.*ARM'
@@ -104,6 +115,11 @@ if [ -n "${ADBD_BIN:-}" ]; then
 fi
 "$gen" "$manifest" > "$out/rootfs.cpio"
 gzip -n -9 -c "$out/rootfs.cpio" > "$out/rootfs.cpio.gz"
+cp "$manifest" "$out/initramfs-nand.list"
+printf 'nand\n' > "$out/boot-nand"
+printf 'file /etc/tq210-boot-nand %s/boot-nand 0644 0 0\n' "$out" >> "$out/initramfs-nand.list"
+"$gen" "$out/initramfs-nand.list" > "$out/rootfs-nand.cpio"
+gzip -n -9 -c "$out/rootfs-nand.cpio" > "$out/rootfs-nand.cpio.gz"
 "$mkimage" -A arm -O linux -T ramdisk -C gzip -n "TQ210 BusyBox $version" -d "$out/rootfs.cpio.gz" "$out/rootfs.uimg"
 # Keep the image below its 16 MiB planned RAM slot.
 [ "$(wc -c < "$out/rootfs.uimg")" -le 16777216 ] || { echo "rootfs too large" >&2; exit 1; }

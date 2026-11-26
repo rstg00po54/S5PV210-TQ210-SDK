@@ -1,5 +1,5 @@
 #!/bin/sh
-# Minimal RAM-only userspace. PID 1 remains alive when the shell exits.
+# RAM rescue init or explicitly selected NAND rootfs boot; PID 1.
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export HOME=/root TERM=vt100
 mount -t devtmpfs devtmpfs /dev || echo "devtmpfs mount failed"
@@ -7,6 +7,49 @@ mount -t proc proc /proc || echo "proc mount failed"
 mount -t sysfs sysfs /sys || echo "sysfs mount failed"
 mount -t tmpfs tmpfs /tmp || echo "tmpfs mount failed"
 hostname tq210
+mkdir -p /mnt/nand /mnt/rootfs
+
+nand_boot()
+{
+    [ -e /sys/class/ubi/ubi_ctrl ] || [ -c /dev/ubi_ctrl ] || return 1
+    if [ -w /sys/module/ubi/parameters/fm_autoconvert ]; then
+        echo Y > /sys/module/ubi/parameters/fm_autoconvert || return 1
+    fi
+    echo "TQ210: attaching UBI for NAND rootfs"
+    /sbin/tq210-ubi attach || return 1
+    # Do not mount a missing/empty volume: a writable UBIFS mount can format it.
+    [ "$(cat /sys/class/ubi/ubi0_1/name 2>/dev/null)" = rootfs ] || return 1
+    mount -t ubifs -o ro ubi0:rootfs /mnt/rootfs || return 1
+    if [ "$(cat /mnt/rootfs/etc/tq210-rootfs-ready 2>/dev/null)" != TQ210-NAND-ROOTFS-V1 ] ||
+       [ ! -x /mnt/rootfs/sbin/tq210-nand-init ] ||
+       [ ! -x /mnt/rootfs/bin/busybox ] ||
+       [ ! -d /mnt/rootfs/dev ] || [ ! -d /mnt/rootfs/proc ] ||
+       [ ! -d /mnt/rootfs/sys ] || [ ! -d /mnt/rootfs/tmp ]; then
+        umount /mnt/rootfs
+        return 1
+    fi
+    mount -o remount,rw /mnt/rootfs || { umount /mnt/rootfs; return 1; }
+    # Move only the four mounts made above, roll back in reverse order
+    # before returning to the rescue shell if a move fails.
+    moved=""
+    for d in dev proc sys tmp; do
+        if mount -o move "/$d" "/mnt/rootfs/$d"; then
+            moved="$d $moved"
+        else
+            for old in $moved; do
+                mount -o move "/mnt/rootfs/$old" "/$old" || echo "Mount rollback failed: $old"
+            done
+            umount /mnt/rootfs || :
+            return 1
+        fi
+    done
+    echo "TQ210: switch_root -> ubi0:rootfs"
+    exec /bin/busybox switch_root /mnt/rootfs /sbin/tq210-nand-init
+}
+if [ -f /etc/tq210-boot-nand ]; then
+    nand_boot
+    echo "NAND rootfs unavailable; staying in RAM rescue shell"
+fi
 cd /root
 export PS1='root@tq210:\w# '
 echo
