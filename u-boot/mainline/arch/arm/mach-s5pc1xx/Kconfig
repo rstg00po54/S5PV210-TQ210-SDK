@@ -10,11 +10,16 @@ config TARGET_S5P_GONI
 	select MISC_COMMON
 	select MMC
 
+config TARGET_TQ210
+	bool "EmbedSky TQ210 (OpenBoot RAM boot)"
+	select OF_CONTROL
+
 endchoice
 
 config SYS_SOC
 	default "s5pc1xx"
 
 source "board/samsung/goni/Kconfig"
+source "board/samsung/tq210/Kconfig"
 
 endif
