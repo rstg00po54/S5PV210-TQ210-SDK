@@ -46,3 +46,15 @@
 &watchdog {
 	status = "disabled";
 };
+
+&pdma0 {
+	status = "disabled";
+};
+
+&pdma1 {
+	status = "disabled";
+};
+
+&mdma1 {
+	status = "disabled";
+};

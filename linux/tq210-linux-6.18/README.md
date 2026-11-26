@@ -1,31 +1,22 @@
 # TQ210 / Linux v6.18 RAM bring-up
 
-The SDK contains the old vendor kernels separately. This directory is the
-tracked board overlay and build helper, not the full Linux source.
-Upstream v6.18 has ARCH_S5PV210, Samsung clocks, PL192 VIC, Samsung
-PWM clocksource and UART, and s5pv210_defconfig. Do not copy the old
-vendor platform implementation into this kernel.
+The full upstream v6.18 source is tracked in linux/kernel-6.18, baseline
+commit 08cc4920743481f83c410f4a1685dc2ee6c353c6. The old vendor kernels
+remain untouched. The native board files are now in the kernel tree:
+arch/arm/configs/tq210_defconfig and
+arch/arm/boot/dts/samsung/s5pv210-tq210.dts.
+The helper no longer modifies source files.
 
-From the SDK root, obtain the official v6.18 tarball (or use an existing
-clean v6.18 checkout with the build script's source-path argument):
+From the SDK root:
 
-    cd linux
-    curl -fL --retry 3 -o /tmp/linux-6.18.tar.xz https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.tar.xz
-    tar -xf /tmp/linux-6.18.tar.xz
-    mv linux-6.18 kernel-6.18
-    cd ..
-
-If importing into the SDK's single main branch, stage and commit the
-clean source before building, excluding build products and any nested
-.git directory. This large import is not performed by the overlay.
-Install dependencies on Ubuntu 20.04:
-
-    sudo apt install build-essential gcc-10-arm-linux-gnueabihf binutils-arm-linux-gnueabihf bison flex bc libssl-dev libelf-dev xz-utils curl
+    sudo apt install build-essential gcc-10-arm-linux-gnueabihf binutils-arm-linux-gnueabihf bison flex bc libssl-dev libelf-dev
     sh linux/tq210-linux-6.18/build.sh
 
 Outputs under linux/build-tq210-6.18/arch/arm/boot:
-zImage and dts/samsung/s5pv210-tq210.dtb. The upstream minimum GCC is
-8.1 and binutils 2.30; installed GCC 10 / binutils 2.34 meet it.
+zImage and dts/samsung/s5pv210-tq210.dtb. To preserve a manually changed
+.config, use direct Kbuild instead of rerunning the helper (which resets
+to tq210_defconfig). No architecture source directories removed yet.
+Compile and boot the unpruned kernel first.
 
 ## First boot, no root filesystem
 
@@ -66,4 +57,4 @@ the top of DDR. Linux normally decompresses near 0x20008000.
 First objective is early console and successful kernel initialization.
 Without initramfs or rootfs, a final VFS panic is expected and does not
 by itself imply a platform failure. Do not use the U-Boot control DT
-as a Linux DT. This overlay has not been cross-compiled or booted.
+as a Linux DT. This native board port has not been cross-compiled or booted.
