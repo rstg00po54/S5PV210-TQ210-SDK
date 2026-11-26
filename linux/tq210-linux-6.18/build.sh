@@ -24,7 +24,7 @@ if ! grep -q 's5pv210-tq210\.dtb' "$dt/Makefile"; then
     printf '\n# EmbedSky TQ210 RAM bring-up\ndtb-$(CONFIG_ARCH_S5PV210) += s5pv210-tq210.dtb\n' >> "$dt/Makefile"
 fi
 
-make -C "$src" O="$out" s5pv210_defconfig
+make -C "$src" O="$out" CC="$CC" s5pv210_defconfig
 cfg="$src/scripts/config"
 "$cfg" --file "$out/.config" \
     --enable ARCH_S5PV210 --enable VMSPLIT_2G \
@@ -46,11 +46,11 @@ cfg="$src/scripts/config"
     --set-str CMDLINE "" --disable CMDLINE_FORCE --disable CMDLINE_EXTEND \
     --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS "" \
     --set-str LOCALVERSION "-tq210" --disable LOCALVERSION_AUTO
-make -C "$src" O="$out" olddefconfig
+make -C "$src" O="$out" CC="$CC" olddefconfig
 for opt in ARCH_S5PV210 CPU_V7 ARM_VIC CLKSRC_SAMSUNG_PWM COMMON_CLK_SAMSUNG SERIAL_SAMSUNG SERIAL_SAMSUNG_CONSOLE SERIAL_EARLYCON DEBUG_LL DEBUG_S3C_UART0 BLK_DEV_INITRD; do
     grep -qx "CONFIG_${opt}=y" "$out/.config" || {
         echo "Required config missing: $opt" >&2; exit 1;
     }
 done
-make -C "$src" O="$out" -j"${JOBS:-$(nproc)}" zImage dtbs
+make -C "$src" O="$out" CC="$CC" -j"${JOBS:-$(nproc)}" zImage dtbs
 ls -lh "$out/arch/arm/boot/zImage" "$out/arch/arm/boot/dts/samsung/s5pv210-tq210.dtb"
