@@ -70,3 +70,17 @@ This USB implementation is not yet built or hardware validated.
 Hardware validation on a245779: USB high-speed enumeration and Fastboot
 getvar version=0.4 passed after manually unbinding visor. New VID/PID,
 serial descriptor, file download and DMA cache coherency remain untested.
+
+### 32 MiB RAM download validation (2026-11-26)
+
+Tested a245779 with the original 04e8:6601 ID and Linux visor unbound.
+Host fastboot stage transferred 33554432 bytes in 5.783 s (~5.53 MiB/s)
+with D-cache off. Host CRC32 and board CRC32 at 0x26000000 both
+01b49574. Re-entered fastboot with MMU and D-cache enabled after
+zeroing and flushing the 32 MiB destination; repeated transfer passed.
+CRC32 before and after cache flush/disable was again 01b49574.
+Returned to UART shell and enabled D-cache again successfully.
+DWC2 hardware: GSNPSID=4f54281a GHWCFG3=1e8084e8 GHWCFG4=fff04030;
+FIFO 7808 words, 15 IN endpoints, GUSBCFG=40001408.
+The new test VID/PID and serial descriptor in 1039a7c have not yet
+been verified. No storage writes or Linux boot tested.
