@@ -818,3 +818,52 @@ respectively, with trailing newline. Stop on attach/mount errors
 and collect logs, do not format or enable write access.
 Fastmap failure may fall back to full scan. Clean Linux shutdown
 required before testing. Build and hardware validation pending.
+
+### U-Boot reads existing UBIFS PASS; independent boot volume
+
+2026-11-26: U-Boot read-only UBI attach by Linux Fastmap,
+7934 good / 2 bad / 0 corrupt, correct existing volume table.
+Mounted rootfs (w5/r0) and listed directories, loaded 15 bytes
+/root/nand-probe.txt at 0x40000000, exact NAND-ROOT-PASS newline.
+No NAND writes in U-Boot. Existing U-Boot needs no rebuild.
+
+Next: independent dynamic volume 2 boot (64 MiB requested)
+for the FIT containing kernel, DTB and NAND root switch initramfs.
+Keep data/rootfs unchanged. Host prepare-boot.sh builds FIT
+without USB or NAND access and compiles updated UBI helper.
+No kernel rebuild required if existing NAND kernel and ramdisk
+are present. Use USB Linux --nand-rootfs for installation.
+On current U-Boot, ubifsumount; ubi detach before leaving.
+Host (linux directory):
+    sh tq210-linux-6.18/prepare-boot.sh
+    sh tq210-linux-6.18/boot-fit.sh --nand-rootfs
+Target UART:
+    /sbin/tq210-usb adb
+Host:
+    adb push build-fit-tq210/nand-rootfs/tq210.itb /tmp/tq210.itb
+    adb push build-fit-tq210/nand-rootfs/tq210-ubi /tmp/tq210-ubi
+    adb push build-fit-tq210/nand-rootfs/tq210-install-boot /tmp/tq210-install-boot
+Target UART:
+    chmod +x /tmp/tq210-ubi
+    sh /tmp/tq210-install-boot --install-boot
+Host readback (compare before power cycle):
+    adb pull /boot/tq210.itb /tmp/tq210-boot-readback.itb
+    sha256sum build-fit-tq210/nand-rootfs/tq210.itb /tmp/tq210-boot-readback.itb
+Target UART, after matching hashes:
+    sync
+    umount /boot
+    /sbin/tq210-nand-sync
+Then USB-load U-Boot only and interrupt autoboot:
+    ubi part ubi-data
+    ubifsmount ubi0:boot
+    ubifsls /
+    ubifsload 0x40000000 /tq210.itb
+    ubifsumount
+    ubi detach
+    bootm 0x40000000
+Require successful load and detach before bootm. FIT SHA256
+checks should pass and Linux should switch to existing rootfs.
+No auto boot yet, no boot-reserved writes. /boot is manually
+mounted for this test, unmount before old shutdown helper.
+Installer refuses nonempty volume and does not overwrite.
+Host build and board test pending.

@@ -82,12 +82,12 @@ static int ctrl(int mtd, int attach)
 	return ret;
 }
 
-static int create(int rootfs)
+static int create(int id)
 {
 	struct ubi_mkvol_req req = {0};
 	char buf[80], path[80];
-	const char *name = rootfs ? "rootfs" : "data";
-	int id = rootfs ? 1 : 0;
+	const char *name = id == 2 ? "boot" : id == 1 ? "rootfs" : "data";
+	int mib = id == 2 ? 64 : id == 1 ? 256 : 128;
 	int fd, ret;
 	snprintf(path, sizeof(path), "/sys/class/ubi/ubi0_%d", id);
 	if (!access(path, F_OK)) {
@@ -103,7 +103,7 @@ static int create(int rootfs)
 		return -1;
 	req.vol_id = id;
 	req.alignment = 1;
-	req.bytes = (rootfs ? 256LL : 128LL) * 1024 * 1024;
+	req.bytes = (int64_t)mib * 1024 * 1024;
 	req.vol_type = UBI_DYNAMIC_VOLUME;
 	req.name_len = strlen(name);
 	memcpy(req.name, name, req.name_len + 1);
@@ -117,7 +117,7 @@ static int create(int rootfs)
 		perror("UBI_IOCMKVOL");
 	close(fd);
 	if (!ret)
-		printf("Created dynamic %s volume (%d MiB requested)\n", name, rootfs ? 256 : 128);
+		printf("Created dynamic %s volume (%d MiB requested)\n", name, mib);
 	return ret;
 }
 
@@ -127,8 +127,9 @@ int main(int argc, char **argv)
 	if (argc != 2 || (strcmp(argv[1], "attach") &&
 			  strcmp(argv[1], "create-data") &&
 			  strcmp(argv[1], "create-rootfs") &&
+			  strcmp(argv[1], "create-boot") &&
 			  strcmp(argv[1], "detach"))) {
-		fprintf(stderr, "Usage: %s attach|create-data|create-rootfs|detach\n", argv[0]);
+		fprintf(stderr, "Usage: %s attach|create-data|create-rootfs|create-boot|detach\n", argv[0]);
 		return 2;
 	}
 	mtd = find_mtd();
@@ -157,6 +158,8 @@ int main(int argc, char **argv)
 		return create(0) ? 1 : 0;
 	if (!strcmp(argv[1], "create-rootfs"))
 		return create(1) ? 1 : 0;
+	if (!strcmp(argv[1], "create-boot"))
+		return create(2) ? 1 : 0;
 	if (ctrl(mtd, 0))
 		return 1;
 	puts("UBI detach PASS");

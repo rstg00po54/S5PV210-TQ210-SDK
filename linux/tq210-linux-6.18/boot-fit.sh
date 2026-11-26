@@ -8,6 +8,7 @@ linux="$sdk/linux"
 openboot="$sdk/openboot"
 variant=adb
 ready=no
+pack_only=no
 for arg in "$@"; do
     case "$arg" in
         --basic) variant=basic ;;
@@ -18,7 +19,8 @@ for arg in "$@"; do
         --ubi) variant=ubi ;;
         --nand-rootfs) variant=nand-rootfs ;;
         --ready) ready=yes ;;
-        *) echo "Usage: $0 [--basic|--nand|--ecc|--rwtest|--bch-rw|--ubi|--nand-rootfs] [--ready]" >&2; exit 2 ;;
+        --pack-only) pack_only=yes ;;
+        *) echo "Usage: $0 [--basic|--nand|--ecc|--rwtest|--bch-rw|--ubi|--nand-rootfs] [--ready|--pack-only]" >&2; exit 2 ;;
     esac
 done
 if [ "$variant" = basic ]; then
@@ -53,7 +55,9 @@ dnw="$openboot/build-host/tq210-dnw"
 loader="$openboot/out/rom_usb_dma_fast.bin"
 mkimage="$sdk/u-boot/mainline/build-tq210/tools/mkimage"
 [ -x "$mkimage" ] || mkimage=$(command -v mkimage)
-for tool in fastboot lsusb timeout dtc; do
+tools=dtc
+if [ "$pack_only" = no ]; then tools="$tools fastboot lsusb timeout"; fi
+for tool in $tools; do
     command -v "$tool" >/dev/null || { echo "Missing tool: $tool" >&2; exit 1; }
 done
 check_file() {
@@ -63,7 +67,7 @@ check_file() {
 check_file "$kernel" 67108864
 check_file "$dtb" 1048576
 check_file "$ramdisk" 251658240
-if [ "$ready" = no ]; then
+if [ "$pack_only" = no ] && [ "$ready" = no ]; then
     [ -x "$dnw" ] || { echo "Missing $dnw" >&2; exit 1; }
     check_file "$loader" 16384
     check_file "$uboot" 16777216
@@ -123,6 +127,11 @@ EOF
 (cd "$out"; "$mkimage" -f tq210.its tq210.itb)
 fit="$out/tq210.itb"
 check_file "$fit" 268435456
+if [ "$pack_only" = yes ]; then
+    echo "FIT packaged: $fit"
+    sha256sum "$fit"
+    exit 0
+fi
 root_run() {
     if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
 }
