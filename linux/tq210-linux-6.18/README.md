@@ -304,3 +304,13 @@ ep2 were present; ps listed /usr/bin/adbd (PID 62); adbd.log was empty.
 This validates USB ADB enumeration, connection and interactive shell.
 File sync, binary integrity, reconnect and sustained throughput are still
 pending. The daemon remains a legacy unauthenticated USB-only lab tool.
+
+### ADB file sync smoke test
+
+Ubuntu unprivileged adb push ../CD-README.txt / transferred 715 bytes;
+adb shell confirmed /CD-README.txt existed and was readable, and
+adb pull /CD-README.txt transferred 715 bytes back. Relative paths
+failed as expected when the file was outside the current directory.
+Chinese text displayed garbled, likely source encoding mismatch;
+byte-for-byte comparison has not yet been reported. Small-file push
+and pull work; large transfers, integrity and reconnect remain pending.
