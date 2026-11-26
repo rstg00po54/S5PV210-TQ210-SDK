@@ -558,3 +558,35 @@ passes before erase; writes only pages 0,1 within block 8159, then
 verifies normal ECC read and MEMREAD corrected statistics. Final erase
 only after success. No automatic cleanup on failure. Tool requires
 the --bch-rw kernel; compile/hardware validation pending.
+
+### Standard MTD test passed; full-chip erase and UBI preparation
+
+2026-11-26 hardware: MTD RWTEST PASS. Erase, BCH8 programming,
+raw parity, clean read, injection of 1+8 bits, corrected read
+(errno=117 EUCLEAN, corrected=9 failed=0 max=8), final erase and
+all 64 pages FF all passed. The test used block 8159 only.
+
+Operator explicitly authorized removal of factory data without backup.
+The new nand-erase-good tool opens only the whole-device writable
+tq210-nand-bch8 MTD, checks geometry, preflights the complete bad
+block map, skips bad blocks, erases one good block at a time and
+verifies every main and OOB byte in raw mode. It stops on any error,
+never marks a block bad automatically and does not retry. Existing
+bad-block map is checked again at completion (kernel-reported map).
+Use only in RAM boot before any UBI attach. This destroys original
+bootloader and filesystem data on good blocks; USB recovery remains.
+
+    arm-linux-gnueabihf-gcc-10 -static -O2 -Wall tq210-linux-6.18/nand-erase-good.c -o /tmp/nand-erase-good
+    adb push /tmp/nand-erase-good /tmp/
+    adb shell chmod +x /tmp/nand-erase-good
+    adb shell /tmp/nand-erase-good --erase-all-good-blocks
+
+Full raw verification requires reading the entire good-block area.
+Do not interrupt power/USB during the test. No automatic erase on
+boot. New utility has not been compiled or hardware-tested here.
+
+The NAND defconfig now enables built-in MTD_UBI and UBIFS_FS.
+No automatic UBI attach or partitioning is enabled. After the erase
+passes, rebuild and test UBI on a separate data partition, keeping
+space for NAND boot. Existing RAM system can perform erase without
+rebuilding.
