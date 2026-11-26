@@ -5,6 +5,9 @@
  */
 #include <init.h>
 #include <command.h>
+#include <env.h>
+#include <fastboot.h>
+#include <linux/libfdt.h>
 #include <time.h>
 #include <asm/io.h>
 #include <asm/arch/cpu.h>
@@ -62,3 +65,40 @@ static int do_tqinfo(struct cmd_tbl *cmdtp, int flag, int argc,
 
 U_BOOT_CMD(tqinfo, 1, 1, do_tqinfo,
 	   "show TQ210 clock, timer and CP15 state", "");
+
+/*
+ * Unified FIT session, separate from the original manual 0x26000000
+ * Fastboot buffer. Keep the entire FIT in the second DDR bank.
+ * Boot only after the host explicitly sends continue and USB is released.
+ */
+#define TQ210_FIT_ADDR 0x40000000UL
+#define TQ210_FIT_SIZE SZ_256M
+
+static int do_tqboot(struct cmd_tbl *cmdtp, int flag, int argc,
+		    char *const argv[])
+{
+	const void *fit = (const void *)TQ210_FIT_ADDR;
+	ulong size;
+	int ret;
+
+	env_set("filesize", NULL);
+	env_set("tq210_continue", NULL);
+	puts("TQ210: waiting for FIT via USB (Ctrl+C for shell)\n");
+	ret = fastboot_usb_run(0, (void *)TQ210_FIT_ADDR, TQ210_FIT_SIZE);
+	if (ret || !env_get("tq210_continue")) {
+		puts("TQ210: USB boot cancelled or failed\n");
+		return CMD_RET_FAILURE;
+	}
+	env_set("tq210_continue", NULL);
+	size = env_get_hex("filesize", 0);
+	if (size < sizeof(struct fdt_header) || size > TQ210_FIT_SIZE ||
+	    fdt_check_header(fit) || fdt_totalsize(fit) != size) {
+		puts("TQ210: invalid or incomplete FIT; not booting\n");
+		return CMD_RET_FAILURE;
+	}
+	puts("TQ210: USB detached, booting FIT\n");
+	return run_command("bootm 40000000", 0);
+}
+
+U_BOOT_CMD(tqboot, 1, 0, do_tqboot,
+	   "receive and boot a FIT over USB without writing storage", "");

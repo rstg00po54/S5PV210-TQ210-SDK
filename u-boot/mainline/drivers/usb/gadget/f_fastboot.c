@@ -486,6 +486,9 @@ static void rx_handler_dl_image(struct usb_ep *ep, struct usb_request *req)
 
 static void do_exit_on_complete(struct usb_ep *ep, struct usb_request *req)
 {
+	/* TQ210 uses an explicit continue request to boot after USB teardown. */
+	if (IS_ENABLED(CONFIG_TARGET_TQ210) && !req->status)
+		env_set("tq210_continue", "1");
 	g_dnl_trigger_detach();
 }
 

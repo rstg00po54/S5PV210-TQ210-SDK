@@ -328,6 +328,10 @@ static void download(char *cmd_parameter, char *response)
 {
 	char *tmp;
 
+	/* Do not reuse a previous transfer's length after an incomplete download. */
+	if (IS_ENABLED(CONFIG_TARGET_TQ210))
+		env_set("filesize", NULL);
+
 	if (!cmd_parameter) {
 		fastboot_fail("Expected command parameter", response);
 		return;

@@ -325,3 +325,26 @@ This validates the basic cross-compile, transfer and execution workflow.
 The reported 571.4 MB/s for the small transfer exceeds USB 2.0 physical
 capacity and is not a valid throughput measurement. Sustained throughput,
 large-file integrity and reconnect behavior remain untested.
+
+## Unified USB RAM boot (experimental)
+
+Rebuild U-Boot with tq210_defconfig; the default bootcmd is now tqboot,
+after a 2-second UART interruption window. Ctrl-C in Fastboot also
+returns to the shell without booting. Old manual commands and
+boot-usb.sh remain available (interrupt autoboot first).
+From linux/:
+
+    sh tq210-linux-6.18/boot-fit.sh
+
+It packages the existing zImage, DTB and raw gzip initramfs into a FIT
+with SHA256 hashes, waits for iROM, downloads OpenBoot/U-Boot, waits
+for the automatic Fastboot session, stages the FIT, and sends continue.
+No UART access, no flash writes. --basic selects the original kernel;
+--ready skips iROM/U-Boot if already in the automatic tqboot session.
+The new session uses 0x40000000-0x4fffffff (256 MiB); zImage is loaded
+at 0x26000000. The old manual Fastboot buffer stays at 0x26000000,
+64 MiB. Explicit continue is required after a complete FIT download;
+the board validates the FDT header and exact transfer length before
+bootm after USB teardown. SHA256 hashes detect corruption, not
+authenticate the image. adbd remains manually activated, as before.
+This path has not yet been compiled or hardware-tested.
