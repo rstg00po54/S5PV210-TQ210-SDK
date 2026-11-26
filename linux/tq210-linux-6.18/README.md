@@ -254,3 +254,42 @@ TEST, TEST1, the [ symlink, and shell arithmetic for the ADB setup loop.
 Also enable fancy prompt expansion. Only rebuild rootfs, not the kernel.
 Manual configfs ACM commands can bypass test on the running image.
 Actual USB enumeration remains pending.
+
+## USB ACM verified; experimental USB-only adbd
+
+Linux 6.18.0-tq210-adb registered ec000000.usb. Manual ConfigFS ACM
+enumerated at high speed 480M, cdc_acm bound on Ubuntu and ttyACM0
+appeared. Operator confirmed text transfer both directions between
+ttyGS0 and ttyACM0. Direct-address Fastboot RAM boot also succeeded.
+
+Build adbd and a new rootfs (no kernel rebuild):
+
+    sh tq210-linux-6.18/build-adbd.sh
+
+The source is a pinned snapshot of ajiang17/android-adbd-for-linux
+ba0f0fd06acaa28d6d264818a1703e462b8bfbbc, fetched via HTTPS; the helper
+does not independently verify an archive SHA256. It patches the
+uninitialized property buffers, removes the TCP/host listener from
+device startup and corrects bulk-in FD initialization. It uses GCC 10
+and static glibc. This is legacy ADB, no RSA authentication and no
+modern shell v2 or compression negotiation. Use only a trusted
+private USB cable; any connected host can obtain root access. Do not
+enable it automatically or expose to a network. No Android framework.
+
+Boot the USB kernel and regenerated rootfs using boot-usb.sh.
+Then on the board UART:
+
+    /sbin/tq210-usb adb
+    cat /tmp/adbd.log
+
+On Ubuntu:
+
+    sudo apt install adb
+    sudo adb devices
+    sudo adb -s TQ210-TEST shell uname -a
+    sudo adb -s TQ210-TEST shell
+
+For a basic file transfer test use a small file, push/pull and compare
+on the host. No claim of modern-client compatibility until tested.
+If endpoints do not appear, inspect adbd.log and dmesg. This source
+port has not yet been cross-compiled or run on hardware.

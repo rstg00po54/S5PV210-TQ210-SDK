@@ -55,7 +55,7 @@ else
     mkdir -p /dev/usb-ffs/adb /dev/pts
     grep -q ' /dev/pts ' /proc/mounts || mount -t devpts devpts /dev/pts
     mount -t functionfs adb /dev/usb-ffs/adb
-    ADBD_SHELL=/bin/sh /usr/bin/adbd > /tmp/adbd.log 2>&1 &
+    (cd /root; export HOME=/root; /usr/bin/adbd) > /tmp/adbd.log 2>&1 &
     echo "$!" > /run/adbd.pid
     i=0
     while [ ! -e /dev/usb-ffs/adb/ep1 ] || [ ! -e /dev/usb-ffs/adb/ep2 ]; do
