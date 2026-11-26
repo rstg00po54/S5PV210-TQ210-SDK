@@ -145,3 +145,18 @@ because ASH_EXPAND_PRMT was disabled; enable it in the next rootfs
 build, along with interactive top and CPU percentages. This is a
 userspace-only change and needs no kernel or U-Boot rebuild. Runtime
 stress, actual clock accuracy and peripherals remain unverified.
+
+### Basic userspace smoke test
+
+On the first BusyBox image, uname, free, /proc/cpuinfo, /proc/interrupts,
+/proc/uptime, ls, ps and mount all returned successfully. /proc/cpuinfo
+reported Cortex-A8 part 0xc08 revision 2 and VFPv3/NEON feature bits.
+Memory snapshot (KiB): total 1034660, used 7040, free 1026668,
+available 1020676. The minimal free applet printed KiB despite -m.
+VIC timer IRQ 40 count 489, UART IRQ 58 count 464, Err 0;
+uptime 145.10 s (not independently timed). PID 1 /bin/sh /init and
+interactive ash were running. rootfs, devtmpfs, proc, sysfs and tmpfs
+were mounted. gpiochip0 through gpiochip33 registered; electrical GPIO
+operation and pinctrl IRQs are not tested. VFP/NEON execution, sustained
+memory/scheduler stress, clock accuracy and external peripherals remain
+unvalidated. No storage or network enabled.
