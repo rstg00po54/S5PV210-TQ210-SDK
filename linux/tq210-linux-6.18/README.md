@@ -921,3 +921,25 @@ the updater now refuses active NAND rootfs, mounts inactive
 volume RO for identity check, then RW for changes, unmounts
 and detaches. Do not force unmount or format any volume.
 Offline path not yet hardware-tested.
+
+### NAND-first Linux and shutdown verified; BL1 investigation
+
+2026-11-26: user confirmed automatic boot after U-Boot update.
+Linux /proc/mounts shows ubi0:rootfs /, ubi0:data /mnt/nand and
+ubi0:boot /boot all RW; /boot/tq210.itb 4.4M. Both original
+persistence test files correct. PID 1 fd10 points to live init
+script, not deleted. tq210-nand-sync unmounted boot and data,
+stopped rootfs background thread and printed safe-to-power-cycle.
+NAND-first FIT path and normal shutdown verified. USB fallback
+and optional backup FIT not yet explicitly tested.
+
+Next phase: standalone NAND bootstrap. Existing first 32 MiB
+boot-reserved stays untouched until ROM format is identified.
+Vendor start.S copies NAND boot image to DDR and compares first
+256 bytes to SRAM at 0xd0020000 on EVT1. Vendor nand_cp.c reads
+2048-byte pages and starts at page zero in nonsecure build.
+This does not establish ROM checksum/ECC or exact load length.
+Run python3 tq210-linux-6.18/audit-nand-boot.py from linux
+against the original vendor binary; examine actual first-stage
+header and disassembly, confirm OM straps and ROM rules before
+building any NAND flash image. Keep USB recovery available.
