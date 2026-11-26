@@ -1,0 +1,13 @@
+CHROMEBOOK LINK BOARD
+M:	Tom Rini <trini@konsulko.com>
+S:	Maintained
+F:	board/google/chromebook_link/
+F:	include/configs/chromebook_link.h
+F:	configs/chromebook_link_defconfig
+
+CHROMEBOOK LINK 64-bit BOARD
+M:	Tom Rini <trini@konsulko.com>
+S:	Maintained
+F:	board/google/chromebook_link/
+F:	include/configs/chromebook_link.h
+F:	configs/chromebook_link64_defconfig

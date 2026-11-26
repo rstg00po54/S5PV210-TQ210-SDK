@@ -1,0 +1,14 @@
+CHROMEBOOK BOB BOARD
+M:	Quentin Schulz <foss+uboot@0leil.net>
+S:	Maintained
+F:	board/google/gru/
+F:	include/configs/gru.h
+F:	configs/chromebook_bob_defconfig
+
+CHROMEBOOK KEVIN BOARD
+M:	Quentin Schulz <foss+uboot@0leil.net>
+M:	Alper Nebi Yasak <alpernebiyasak@gmail.com>
+S:	Maintained
+F:	board/google/gru/
+F:	include/configs/gru.h
+F:	configs/chromebook_kevin_defconfig
