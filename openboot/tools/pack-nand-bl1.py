@@ -9,8 +9,8 @@ SIZE = 8192
 HEADER = 16
 
 def pack(payload):
-    if len(payload) < 4 or len(payload) > SIZE - HEADER or len(payload) % 4:
-        raise ValueError("payload must be ARM word aligned, 4..8176 bytes")
+    if len(payload) < 4 or len(payload) > SIZE - HEADER:
+        raise ValueError("payload must be 4..8176 bytes")
     insn, = struct.unpack_from("<I", payload)
     if insn & 0xff000000 != 0xea000000:
         raise ValueError("expected unconditional ARM B at payload entry")
@@ -18,7 +18,7 @@ def pack(payload):
     if disp & 0x800000:
         disp -= 0x1000000
     dest = 8 + 4 * disp
-    if not 0 <= dest < len(payload):
+    if not 0 <= dest <= len(payload) - 4:
         raise ValueError("entry branch outside payload")
     body = payload.ljust(SIZE - HEADER, b"\0")
     return struct.pack("<4I", SIZE, 0, sum(body), 0) + body
