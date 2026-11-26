@@ -28,6 +28,7 @@
 #include <linux/bug.h>
 #include <linux/delay.h>
 #include <linux/printk.h>
+#include <vsprintf.h>
 
 #include <linux/bitfield.h>
 #include <linux/errno.h>
@@ -227,6 +228,7 @@ static int udc_enable(struct dwc2_udc *dev)
 	debug_cond(DEBUG_SETUP != 0, "%s: %p\n", __func__, dev);
 
 	otg_phy_init(dev);
+	reset_available = 1;
 	reconfig_usbd(dev);
 
 	debug_cond(DEBUG_SETUP != 0,
@@ -306,6 +308,17 @@ int usb_gadget_unregister_driver(struct usb_gadget_driver *driver)
 		return -ENODEV;
 	if (!driver || driver != dev->driver)
 		return -EINVAL;
+
+	/* Stop TQ210 DMA before completing or freeing queued requests. */
+	if (IS_ENABLED(CONFIG_TARGET_TQ210)) {
+		setbits_le32(&reg->device_regs.dctl, DCTL_SFTDISCON);
+		writel(0, &reg->global_regs.gintmsk);
+		mdelay(20);
+		if (dwc2_core_reset(reg))
+			panic("TQ210 USB DMA quiesce failed; cold boot required");
+		setbits_le32(&reg->device_regs.dctl, DCTL_SFTDISCON);
+		writel(0, &reg->global_regs.gahbcfg);
+	}
 
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->driver = 0;
@@ -470,7 +483,8 @@ static void reconfig_usbd(struct dwc2_udc *dev)
 	u32 max_hw_ep;
 	int pdata_hw_ep;
 
-	dwc2_core_reset(reg);
+	if (dwc2_core_reset(reg) && IS_ENABLED(CONFIG_TARGET_TQ210))
+		panic("TQ210 USB core reset failed; cold boot required");
 
 	debug("Resetting OTG controller\n");
 
