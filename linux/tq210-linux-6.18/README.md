@@ -356,3 +356,30 @@ TQ210 CoreB. No UART download commands are required. The original manual
 boot path remains available. Maximum 256 MiB transfer, sustained transfer
 speed, interrupted download recovery and corrupted-image rejection have
 not yet been tested. NAND remains untouched by this boot procedure.
+
+## Experimental read-only NAND kernel
+
+Separate NAND + ADB config, built with:
+
+    sh tq210-linux-6.18/build-nand-kernel.sh
+    sh tq210-linux-6.18/boot-fit.sh --nand
+
+The controller is at 0xb0e00000, clock CLK_NFCON (IP1 bit 28),
+pinctrl MP03/MP06 function 2 and MP01-2 function 3, matching the
+tested runtime/drivers/nand.c register sequence. Only CE0, 8-bit,
+1 GiB / 2048+64 / 128 KiB erase geometry accepted. Modern NAND
+exec_op API, standard ID/ONFI discovery and RAM-only bad block
+scan; read-only MTD, NAND_ROM and operation whitelist rejecting
+program/erase/data-out cycles. No ECC correction yet: raw data
+may contain bit errors and must not be trusted as filesystem data.
+No flash BBT, no UBI, no automatic mounts, no write testing.
+
+Check on UART:
+    dmesg | grep -i nand
+    cat /proc/mtd
+    ls /dev/mtd*
+    dd if=/dev/mtd0ro of=/tmp/nand-page0.bin bs=2048 count=1
+    hexdump -C /tmp/nand-page0.bin | head
+
+The regular ADB kernel and old boot commands are unaffected.
+This new driver has not been compiled or tested on the board yet.

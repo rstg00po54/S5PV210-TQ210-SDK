@@ -71,3 +71,5 @@ nand-objs += nand_micron.o
 nand-objs += nand_sandisk.o
 nand-objs += nand_samsung.o
 nand-objs += nand_toshiba.o
+
+obj-$(CONFIG_MTD_NAND_TQ210_RO) += tq210-nand-ro.o

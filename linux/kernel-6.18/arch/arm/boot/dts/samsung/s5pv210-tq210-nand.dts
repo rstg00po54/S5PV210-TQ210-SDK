@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-2.0
+#include "s5pv210-tq210-adb.dts"
+
+&{/soc} {
+	nand-controller@b0e00000 {
+		compatible = "embedsky,tq210-nand-ro";
+		reg = <0xb0e00000 0x1000>;
+		clocks = <&clocks CLK_NFCON>;
+		clock-names = "nand";
+		pinctrl-names = "default";
+		pinctrl-0 = <&tq210_nand_ctrl &tq210_nand_data &tq210_nand_ce0>;
+		status = "okay";
+	};
+};
+
+&pinctrl0 {
+	tq210_nand_ctrl: tq210-nand-ctrl {
+		samsung,pins = "mp03-0", "mp03-1", "mp03-2", "mp03-3",
+			       "mp03-4", "mp03-5", "mp03-6", "mp03-7";
+		samsung,pin-function = <2>;
+	};
+	tq210_nand_data: tq210-nand-data {
+		samsung,pins = "mp06-0", "mp06-1", "mp06-2", "mp06-3",
+			       "mp06-4", "mp06-5", "mp06-6", "mp06-7";
+		samsung,pin-function = <2>;
+	};
+	tq210_nand_ce0: tq210-nand-ce0 {
+		samsung,pins = "mp01-2";
+		samsung,pin-function = <3>;
+	};
+};

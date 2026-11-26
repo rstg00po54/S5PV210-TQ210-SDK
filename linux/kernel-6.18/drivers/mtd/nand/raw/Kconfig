@@ -12,6 +12,13 @@ if MTD_RAW_NAND
 
 comment "Raw/parallel NAND flash controllers"
 
+config MTD_NAND_TQ210_RO
+	tristate "TQ210 S5PV210 read-only NAND diagnostics"
+	depends on ARCH_S5PV210 && OF
+	help
+	  Experimental read-only PIO controller for EmbedSky TQ210 CoreB.
+	  No ECC correction or program/erase support.
+
 config MTD_NAND_DENALI
 	tristate
 
